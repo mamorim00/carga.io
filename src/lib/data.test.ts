@@ -1,16 +1,27 @@
 import { describe, expect, it } from "vitest";
 import {
-  getRoster,
+  acceptAthleteInvite,
+  addManualActivity,
+  createAthleteInvite,
+  createCoachAccount,
+  findAthleteByEmail,
+  findCoachByEmail,
   getAthlete,
   getAthleteActivityFeed,
+  getAthleteByInviteToken,
   getLatestUnreportedActivity,
+  getPendingInvites,
+  getRoster,
   getWellnessHistory,
+  isEmailTaken,
+  revokeInvite,
   submitCheckin,
-  addManualActivity,
 } from "./data";
 
+const demoCoach = findCoachByEmail("rafael@fundobh.com.br")!;
+
 describe("seeded roster", () => {
-  const roster = getRoster();
+  const roster = getRoster(demoCoach.id);
 
   it("computes an ACWR zone for every seeded athlete", () => {
     expect(roster).toHaveLength(6);
@@ -38,13 +49,13 @@ describe("seeded roster", () => {
 
 describe("seeded wellness history", () => {
   it("gives every seeded athlete recent wellness check-ins", () => {
-    for (const a of getRoster()) {
+    for (const a of getRoster(demoCoach.id)) {
       expect(getWellnessHistory(a.athleteId).length).toBeGreaterThan(0);
     }
   });
 
   it("has the at-risk athlete's wellness reflect her load spike, not just her ACWR", () => {
-    const camila = getRoster().find((a) => a.name === "Camila Souza")!;
+    const camila = getRoster(demoCoach.id).find((a) => a.name === "Camila Souza")!;
     const [latest] = getWellnessHistory(camila.athleteId, 1);
     expect(latest.sleep).toBeLessThanOrEqual(2);
     expect(latest.soreness).toBeGreaterThanOrEqual(4);
@@ -53,7 +64,7 @@ describe("seeded wellness history", () => {
 
 describe("check-in flow", () => {
   it("lets an athlete without a wearable log manually, then check in", () => {
-    const thiago = getRoster().find((a) => a.name === "Thiago Nunes")!;
+    const thiago = getRoster(demoCoach.id).find((a) => a.name === "Thiago Nunes")!;
     const activity = addManualActivity({ athleteId: thiago.athleteId, durationMin: 50, distanceKm: 9 });
     expect(getLatestUnreportedActivity(thiago.athleteId)?.id).toBe(activity.id);
 
@@ -73,7 +84,7 @@ describe("check-in flow", () => {
   });
 
   it("rejects a check-in for an activity that belongs to someone else", () => {
-    const [a, b] = getRoster();
+    const [a, b] = getRoster(demoCoach.id);
     const activity = addManualActivity({ athleteId: a.athleteId, durationMin: 30 });
     expect(() =>
       submitCheckin({
@@ -97,7 +108,7 @@ describe("getAthlete", () => {
 
 describe("getAthleteActivityFeed", () => {
   it("joins each activity with its RPE once checked in, most recent first", () => {
-    const marina = getRoster().find((a) => a.name === "Marina Alves")!;
+    const marina = getRoster(demoCoach.id).find((a) => a.name === "Marina Alves")!;
     const before = getAthleteActivityFeed(marina.athleteId, 3);
     expect(before.length).toBeGreaterThan(0);
     expect(before.every((a, i) => i === 0 || a.startedAt <= before[i - 1].startedAt)).toBe(true);
@@ -119,10 +130,88 @@ describe("getAthleteActivityFeed", () => {
   });
 
   it("reports null RPE for an activity with no session report yet", () => {
-    const thiago = getRoster().find((a) => a.name === "Thiago Nunes")!;
+    const thiago = getRoster(demoCoach.id).find((a) => a.name === "Thiago Nunes")!;
     const activity = addManualActivity({ athleteId: thiago.athleteId, durationMin: 30 });
     const feed = getAthleteActivityFeed(thiago.athleteId, 1);
     expect(feed[0].id).toBe(activity.id);
     expect(feed[0].rpe).toBeNull();
+  });
+});
+
+describe("coach signup", () => {
+  it("creates a new org scoped to the new coach, separate from the seeded demo roster", () => {
+    const coach = createCoachAccount({
+      orgName: "Equipe Teste",
+      name: "Nova Treinadora",
+      email: "nova@teste.com",
+      passwordHash: "scrypt:whatever:hash",
+    });
+    expect(coach.orgId).not.toBe(demoCoach.orgId);
+    expect(getRoster(coach.id)).toHaveLength(0);
+    expect(findCoachByEmail("nova@teste.com")?.id).toBe(coach.id);
+  });
+});
+
+describe("athlete invites", () => {
+  it("invites an athlete, then lets them accept and log in with the password they set", () => {
+    const athlete = createAthleteInvite({
+      orgId: demoCoach.orgId,
+      coachId: demoCoach.id,
+      name: "Convidado Teste",
+      email: "convidado@teste.com",
+      sport: "RUNNING",
+    });
+    expect(athlete.status).toBe("INVITED");
+    expect(athlete.passwordHash).toBeNull();
+    expect(getPendingInvites(demoCoach.id).map((a) => a.id)).toContain(athlete.id);
+    // Not on the roster yet — pending invites are listed separately.
+    expect(getRoster(demoCoach.id).map((a) => a.athleteId)).not.toContain(athlete.id);
+
+    const found = getAthleteByInviteToken(athlete.inviteToken!);
+    expect(found?.id).toBe(athlete.id);
+
+    const accepted = acceptAthleteInvite({ token: athlete.inviteToken!, passwordHash: "scrypt:whatever:hash2" });
+    expect(accepted.status).toBe("ACTIVE");
+    expect(accepted.inviteToken).toBeNull();
+    expect(getPendingInvites(demoCoach.id).map((a) => a.id)).not.toContain(athlete.id);
+    expect(getRoster(demoCoach.id).map((a) => a.athleteId)).toContain(athlete.id);
+  });
+
+  it("rejects accepting an unknown or already-used token", () => {
+    expect(() => acceptAthleteInvite({ token: "not-a-real-token", passwordHash: "x" })).toThrow();
+  });
+
+  it("lets the inviting coach revoke a pending invite, but not another coach", () => {
+    const other = createCoachAccount({
+      orgName: "Outra Equipe",
+      name: "Outro Treinador",
+      email: "outro@teste.com",
+      passwordHash: "scrypt:whatever:hash",
+    });
+    const athlete = createAthleteInvite({
+      orgId: demoCoach.orgId,
+      coachId: demoCoach.id,
+      name: "Revogar Teste",
+      email: "revogar@teste.com",
+      sport: "OTHER",
+    });
+
+    expect(revokeInvite(athlete.id, other.id)).toBe(false);
+    expect(getAthlete(athlete.id)).toBeDefined();
+
+    expect(revokeInvite(athlete.id, demoCoach.id)).toBe(true);
+    expect(getAthlete(athlete.id)).toBeUndefined();
+  });
+
+  it("treats an email already used by a coach or athlete as taken", () => {
+    expect(isEmailTaken(demoCoach.email)).toBe(true);
+    expect(isEmailTaken("marina.alves@atleta.com")).toBe(true);
+    expect(isEmailTaken("ninguem@teste.com")).toBe(false);
+  });
+});
+
+describe("findAthleteByEmail", () => {
+  it("is case-insensitive", () => {
+    expect(findAthleteByEmail("MARINA.ALVES@ATLETA.COM")?.name).toBe("Marina Alves");
   });
 });

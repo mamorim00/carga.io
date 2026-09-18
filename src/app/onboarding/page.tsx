@@ -1,15 +1,22 @@
 import Link from "next/link";
+import { requireAthlete } from "@/lib/auth";
+import { LogoutButton } from "@/components/LogoutButton";
 
-export default function OnboardingPage() {
+export default async function OnboardingPage() {
+  const athlete = await requireAthlete();
+
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-between bg-ink px-8 pt-16 pb-10 text-paper">
       <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-sm bg-accent" />
-          <span className="text-xs font-bold tracking-[0.12em] text-[#b8b4a8] uppercase">Carga</span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-sm bg-accent" />
+            <span className="text-xs font-bold tracking-[0.12em] text-[#b8b4a8] uppercase">Carga</span>
+          </div>
+          <LogoutButton className="text-[11px] font-semibold text-[#8b8878]" />
         </div>
         <h1 className="font-display text-[34px] leading-tight font-semibold text-paper">
-          Carga de treino e atividade, no mesmo lugar.
+          Olá, {athlete.name.split(" ")[0]}.
         </h1>
         <p className="max-w-xs text-sm leading-relaxed text-[#8b8878]">
           Cada treino entra com duração, distância e frequência cardíaca — do relógio ou registrado à mão. O
@@ -44,10 +51,10 @@ export default function OnboardingPage() {
         </div>
 
         <Link
-          href="/dashboard"
+          href="/progress"
           className="flex items-center justify-center gap-2 rounded-md border border-ink px-4 py-3.5 text-sm font-semibold text-ink"
         >
-          Entrar como treinador
+          Ver meu progresso
         </Link>
       </div>
     </main>

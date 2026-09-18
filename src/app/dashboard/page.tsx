@@ -1,12 +1,14 @@
 import Link from "next/link";
-import { getCoach, getOrg, getRoster } from "@/lib/data";
+import { LogoutButton } from "@/components/LogoutButton";
+import { requireCoach } from "@/lib/auth";
+import { getOrg, getRoster } from "@/lib/data";
 import { ZONE_STYLE, timeAgo } from "@/lib/presentation";
 import type { AcwrZone } from "@/lib/types";
 
 export default async function DashboardPage() {
-  const org = getOrg();
-  const coach = getCoach();
-  const roster = getRoster();
+  const coach = await requireCoach();
+  const org = getOrg(coach.orgId)!;
+  const roster = getRoster(coach.id);
 
   const riskCount = roster.filter((a) => a.zone === "RISK").length;
   const syncingCount = roster.filter((a) => a.hasWearable).length;
@@ -26,7 +28,9 @@ export default async function DashboardPage() {
         </div>
         <nav className="flex flex-col gap-0.5 text-[13.5px]">
           <span className="rounded-md bg-[#2a293a] px-3 py-2.5 font-medium text-paper">Painel</span>
-          <span className="rounded-md px-3 py-2.5 text-[#8b8878]">Atletas</span>
+          <Link href="/dashboard/invite" className="rounded-md px-3 py-2.5 text-[#8b8878]">
+            Convidar atleta
+          </Link>
           <span className="flex items-center justify-between rounded-md px-3 py-2.5 text-[#8b8878]">
             Alertas
             {riskCount > 0 && (
@@ -36,14 +40,17 @@ export default async function DashboardPage() {
           <span className="rounded-md px-3 py-2.5 text-[#8b8878]">Mensagens</span>
           <span className="rounded-md px-3 py-2.5 text-[#8b8878]">Configurações</span>
         </nav>
-        <div className="mt-auto flex items-center gap-2.5 border-t border-[#2e2d3d] pt-4">
-          <div className="flex h-7 w-7 items-center justify-center rounded-[4px] bg-accent text-[11.5px] font-bold text-paper">
-            {coach.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}
+        <div className="mt-auto flex flex-col gap-3 border-t border-[#2e2d3d] pt-4">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-7 w-7 items-center justify-center rounded-[4px] bg-accent text-[11.5px] font-bold text-paper">
+              {coach.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}
+            </div>
+            <div>
+              <div className="text-[12.5px] font-semibold text-paper">{coach.name}</div>
+              <div className="text-[10.5px] text-[#6f6c60]">{org.name} · Treinador</div>
+            </div>
           </div>
-          <div>
-            <div className="text-[12.5px] font-semibold text-paper">{coach.name}</div>
-            <div className="text-[10.5px] text-[#6f6c60]">{org.name} · Treinador</div>
-          </div>
+          <LogoutButton className="self-start text-[11px] font-semibold text-[#8b8878]" />
         </div>
       </aside>
 
@@ -52,9 +59,12 @@ export default async function DashboardPage() {
           <div>
             <div className="font-display text-2xl font-semibold text-ink">Painel do time</div>
             <div className="mt-0.5 text-[12.5px] text-muted">
-              {org.name} · {roster.length} atletas
+              {org.name} · {roster.length} atleta{roster.length === 1 ? "" : "s"}
             </div>
           </div>
+          <Link href="/dashboard/invite" className="rounded-md bg-ink px-4 py-2.5 text-[13px] font-semibold text-paper">
+            + Convidar atleta
+          </Link>
         </div>
 
         <div className="mx-8.5 mb-5 flex gap-px overflow-hidden rounded-lg border border-line bg-line">
@@ -67,7 +77,7 @@ export default async function DashboardPage() {
           <div className="flex-1 bg-surface px-5 py-4">
             <div className="text-[11.5px] text-muted">Carga semanal média</div>
             <div className="font-display mt-1 text-2xl font-semibold text-ink">
-              {Math.round(roster.reduce((s, a) => s + a.weeklyLoad, 0) / roster.length)} UA
+              {roster.length > 0 ? Math.round(roster.reduce((s, a) => s + a.weeklyLoad, 0) / roster.length) : "—"} UA
             </div>
           </div>
           <div className="flex-1 px-5 py-4" style={{ background: "var(--risk-soft)" }}>
@@ -81,6 +91,17 @@ export default async function DashboardPage() {
         </div>
 
         <div className="flex flex-grow gap-5 overflow-hidden px-8.5 pb-6">
+          {roster.length === 0 ? (
+            <div className="flex flex-grow flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-line bg-surface p-10 text-center">
+              <div className="text-[14px] font-semibold text-ink">Sua equipe ainda não tem atletas</div>
+              <p className="max-w-xs text-[12.5px] leading-relaxed text-muted">
+                Convide o primeiro atleta para começar a ver carga, ACWR e bem-estar no painel.
+              </p>
+              <Link href="/dashboard/invite" className="mt-1 rounded-md bg-ink px-4 py-2.5 text-[13px] font-semibold text-paper">
+                Convidar atleta
+              </Link>
+            </div>
+          ) : (
           <div className="grid flex-grow auto-rows-min grid-cols-3 gap-3 overflow-hidden">
             {roster.map((a) => {
               const style = a.zone ? ZONE_STYLE[a.zone] : { dot: "#9aa69f", border: "var(--line)", text: "#9aa69f" };
@@ -106,6 +127,7 @@ export default async function DashboardPage() {
               );
             })}
           </div>
+          )}
 
           <div className="flex w-[270px] flex-shrink-0 flex-col gap-4 overflow-hidden rounded-lg border border-line bg-surface p-5">
             <div>

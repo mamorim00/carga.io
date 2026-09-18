@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { ActivityFeed } from "@/components/ActivityFeed";
-import { getAthlete, getAthleteActivityFeed, getAthleteLoadSummary, getDemoAthleteId } from "@/lib/data";
+import { LogoutButton } from "@/components/LogoutButton";
+import { requireAthlete } from "@/lib/auth";
+import { getAthleteActivityFeed, getAthleteLoadSummary } from "@/lib/data";
 import { ZONE_LABEL, ZONE_NOTE } from "@/lib/presentation";
 
 export default async function ProgressPage() {
-  const athleteId = getDemoAthleteId();
-  const athlete = getAthlete(athleteId)!;
-  const summary = getAthleteLoadSummary(athleteId);
-  const activities = getAthleteActivityFeed(athleteId, 5);
+  const athlete = await requireAthlete();
+  const summary = getAthleteLoadSummary(athlete.id);
+  const activities = getAthleteActivityFeed(athlete.id, 5);
   const zone = summary.zone
     ? { label: ZONE_LABEL[summary.zone], note: ZONE_NOTE[summary.zone] }
     : null;
@@ -17,9 +18,12 @@ export default async function ProgressPage() {
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col gap-4 bg-paper px-6 pt-6 pb-8">
-      <div>
-        <div className="text-[12.5px] text-muted">Olá, {athlete.name.split(" ")[0]}</div>
-        <div className="font-display text-[23px] font-semibold text-ink">Seu progresso</div>
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-[12.5px] text-muted">Olá, {athlete.name.split(" ")[0]}</div>
+          <div className="font-display text-[23px] font-semibold text-ink">Seu progresso</div>
+        </div>
+        <LogoutButton className="text-[11px] font-semibold text-muted" />
       </div>
 
       <div className="flex items-center gap-5 rounded-lg bg-ink p-5">

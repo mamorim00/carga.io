@@ -3,7 +3,14 @@
 // activity source, relative dates). Kept separate from lib/data.ts because
 // none of this is queried or persisted — it only shapes what's already read.
 
-import type { AcwrZone, ActivitySource } from "./types";
+import type { AcwrZone, ActivitySource, Sport } from "./types";
+
+export const SPORT_LABEL: Record<Sport, string> = {
+  RUNNING: "Corrida",
+  CYCLING: "Ciclismo",
+  TRIATHLON: "Triatlo",
+  OTHER: "Outro",
+};
 
 export const ZONE_LABEL: Record<AcwrZone, string> = {
   IDEAL: "Zona ideal",

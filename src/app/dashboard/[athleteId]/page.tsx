@@ -1,15 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActivityFeed } from "@/components/ActivityFeed";
+import { requireCoach } from "@/lib/auth";
 import { getAthlete, getAthleteActivityFeed, getAthleteLoadSummary, getWellnessHistory } from "@/lib/data";
-import { ZONE_LABEL, ZONE_NOTE, ZONE_STYLE, timeAgo } from "@/lib/presentation";
-
-const SPORT_LABEL: Record<string, string> = {
-  RUNNING: "Corrida",
-  CYCLING: "Ciclismo",
-  TRIATHLON: "Triatlo",
-  OTHER: "Outro",
-};
+import { SPORT_LABEL, ZONE_LABEL, ZONE_NOTE, ZONE_STYLE, timeAgo } from "@/lib/presentation";
 
 const WELLNESS_LABEL: Record<"sleep" | "soreness" | "mood" | "stress", string> = {
   sleep: "Sono",
@@ -23,9 +17,12 @@ export default async function AthleteDetailPage({
 }: {
   params: Promise<{ athleteId: string }>;
 }) {
+  const coach = await requireCoach();
   const { athleteId } = await params;
   const athlete = getAthlete(athleteId);
-  if (!athlete) notFound();
+  // notFound() rather than a 403: a coach browsing another org's athlete id
+  // shouldn't learn the id is valid at all.
+  if (!athlete || athlete.coachId !== coach.id) notFound();
 
   const summary = getAthleteLoadSummary(athleteId);
   const activities = getAthleteActivityFeed(athleteId, 10);

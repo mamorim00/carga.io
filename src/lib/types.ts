@@ -6,6 +6,8 @@
 export type Sport = "RUNNING" | "CYCLING" | "TRIATHLON" | "OTHER";
 export type ActivitySource = "STRAVA" | "GARMIN" | "APPLE_HEALTH" | "MANUAL";
 export type AcwrZone = "IDEAL" | "ATTENTION" | "RISK";
+/** ACTIVE once the athlete follows their invite link and sets a password. */
+export type AthleteStatus = "INVITED" | "ACTIVE";
 
 export interface Org {
   id: string;
@@ -14,8 +16,10 @@ export interface Org {
 
 export interface Coach {
   id: string;
+  orgId: string;
   name: string;
   email: string;
+  passwordHash: string;
 }
 
 export interface Athlete {
@@ -27,6 +31,12 @@ export interface Athlete {
   sport: Sport;
   /** true once the athlete has connected a wearable (Strava, at launch). */
   hasWearable: boolean;
+  status: AthleteStatus;
+  /** Set once the invite is accepted; null while status is INVITED. */
+  passwordHash: string | null;
+  /** Opaque, single-use; null once accepted or if never invited this way. */
+  inviteToken: string | null;
+  inviteExpiresAt: string | null;
 }
 
 export interface Activity {

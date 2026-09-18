@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import {
   classifyAcwr,
   combinedLoad,
@@ -5,6 +6,7 @@ import {
   externalLoadFromHrZones,
   internalLoad,
 } from "./metrics";
+import { hashPassword } from "./password";
 import type {
   Activity,
   AthleteLoadSummary,
@@ -25,21 +27,67 @@ import type {
  * live Postgres instance. Every function here has a 1:1 real counterpart
  * once DATABASE_URL points at a real database — swap the body, keep the
  * signature, and the pages/API routes above it don't change.
+ *
+ * Password hashing itself lives in src/lib/password.ts, not here — this
+ * module only ever stores/compares the resulting hash string, the same way
+ * a real users table would.
+ *
+ * State lives on `globalThis`, not in plain module-level `let`/`const`
+ * bindings. Next.js compiles Route Handlers, Server Components/Pages, and
+ * Proxy as separate bundles ("layers"), and each one gets its own
+ * instantiation of this module — confirmed by testing: an activity POSTed
+ * to /api/activities/manual was invisible to the /checkin *page*'s render
+ * moments later, in both `next dev` and a production `next start`. Plain
+ * module state would silently fork into N independent copies. `globalThis`
+ * is the one thing guaranteed to be the same object across all of them
+ * within a single process — the same trick Next.js's own docs recommend
+ * for a singleton Prisma client in dev.
  */
 
-let nextId = 1;
-function id(prefix: string): string {
-  return `${prefix}_${nextId++}`;
+interface Store {
+  nextId: number;
+  seeded: boolean;
+  orgs: Org[];
+  coaches: Coach[];
+  athletes: Athlete[];
+  activities: Activity[];
+  sessionReports: SessionReport[];
+  wellnessCheckins: WellnessCheckin[];
+  painReports: PainReport[];
+  loadsByAthlete: Map<string, number[]>;
 }
 
-const org: Org = { id: "org_1", name: "Fundo BH" };
-const coach: Coach = { id: "coach_1", name: "Rafael Mendes", email: "rafael@fundobh.com.br" };
+const globalForCarga = globalThis as unknown as { __cargaStore?: Store };
+const store: Store = (globalForCarga.__cargaStore ??= {
+  nextId: 1,
+  seeded: false,
+  orgs: [],
+  coaches: [],
+  athletes: [],
+  activities: [],
+  sessionReports: [],
+  wellnessCheckins: [],
+  painReports: [],
+  loadsByAthlete: new Map(),
+});
 
-const athletes: Athlete[] = [];
-const activities: Activity[] = [];
-const sessionReports: SessionReport[] = [];
-const wellnessCheckins: WellnessCheckin[] = [];
-const painReports: PainReport[] = [];
+function id(prefix: string): string {
+  return `${prefix}_${store.nextId++}`;
+}
+
+function generateInviteToken(): string {
+  return crypto.randomBytes(24).toString("base64url");
+}
+
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+const orgs = store.orgs;
+const coaches = store.coaches;
+const athletes = store.athletes;
+const activities = store.activities;
+const sessionReports = store.sessionReports;
+const wellnessCheckins = store.wellnessCheckins;
+const painReports = store.painReports;
 
 function isoDaysAgo(days: number): string {
   const d = new Date();
@@ -118,6 +166,8 @@ function seedHistory(
 }
 
 function seedAthlete(opts: {
+  orgId: string;
+  coachId: string;
   name: string;
   email: string;
   sport: Athlete["sport"];
@@ -128,23 +178,49 @@ function seedAthlete(opts: {
 }): { athlete: Athlete; loads: number[] } {
   const athlete: Athlete = {
     id: id("ath"),
-    orgId: org.id,
-    coachId: coach.id,
+    orgId: opts.orgId,
+    coachId: opts.coachId,
     name: opts.name,
     email: opts.email,
     sport: opts.sport,
     hasWearable: opts.hasWearable,
+    // Seeded athletes start ACTIVE (with a demo password — see README) so
+    // the demo roster is reachable through the same real login as any
+    // account created via signup + invite.
+    status: "ACTIVE",
+    passwordHash: DEMO_PASSWORD_HASH,
+    inviteToken: null,
+    inviteExpiresAt: null,
   };
   athletes.push(athlete);
   const loads = seedHistory(athlete.id, 40, opts.curve, opts.source, opts.wellness);
   return { athlete, loads };
 }
 
-const loadsByAthlete = new Map<string, number[]>();
+const loadsByAthlete = store.loadsByAthlete;
+
+// Every seeded account (the demo coach and all six demo athletes) shares
+// this one password so the demo roster is reachable through the same real
+// login as any account created via signup + invite. See README for the
+// credentials. Hashed once at module load, not per-account.
+const DEMO_PASSWORD_HASH = hashPassword("carga1234");
 
 function seed() {
+  const org: Org = { id: id("org"), name: "Fundo BH" };
+  orgs.push(org);
+  const coach: Coach = {
+    id: id("coach"),
+    orgId: org.id,
+    name: "Rafael Mendes",
+    email: "rafael@fundobh.com.br",
+    passwordHash: DEMO_PASSWORD_HASH,
+  };
+  coaches.push(coach);
+
   // Steady, well-managed load → IDEAL. Wellness matches: consistently good.
   const marina = seedAthlete({
+    orgId: org.id,
+    coachId: coach.id,
     name: "Marina Alves",
     email: "marina.alves@atleta.com",
     sport: "RUNNING",
@@ -156,6 +232,8 @@ function seed() {
   loadsByAthlete.set(marina.athlete.id, marina.loads);
 
   const diego = seedAthlete({
+    orgId: org.id,
+    coachId: coach.id,
     name: "Diego Ferreira",
     email: "diego.ferreira@atleta.com",
     sport: "TRIATHLON",
@@ -169,6 +247,8 @@ function seed() {
   // Sharp spike in the last 7 days → RISK. Wellness degrades right along with it:
   // sleep and mood drop, soreness and stress climb once the heavy block starts.
   const camila = seedAthlete({
+    orgId: org.id,
+    coachId: coach.id,
     name: "Camila Souza",
     email: "camila.souza@atleta.com",
     sport: "RUNNING",
@@ -187,6 +267,8 @@ function seed() {
 
   // Trending up but not yet critical → ATTENTION. Wellness slides down the same ramp.
   const bruno = seedAthlete({
+    orgId: org.id,
+    coachId: coach.id,
     name: "Bruno Castro",
     email: "bruno.castro@atleta.com",
     sport: "CYCLING",
@@ -209,6 +291,8 @@ function seed() {
   loadsByAthlete.set(bruno.athlete.id, bruno.loads);
 
   const ana = seedAthlete({
+    orgId: org.id,
+    coachId: coach.id,
     name: "Ana Paula Lima",
     email: "ana.lima@atleta.com",
     sport: "RUNNING",
@@ -222,6 +306,8 @@ function seed() {
   // No wearable at all — logs manually, and hasn't in a few days (stale sync).
   // Wellness is a bit more tired overall: sparser, harder sessions with less recovery in between.
   const thiago = seedAthlete({
+    orgId: org.id,
+    coachId: coach.id,
     name: "Thiago Nunes",
     email: "thiago.nunes@atleta.com",
     sport: "TRIATHLON",
@@ -236,21 +322,124 @@ function seed() {
   loadsByAthlete.set(thiago.athlete.id, thiago.loads);
 }
 
-seed();
-
-// ---- Read API (roster, athlete detail) --------------------------------
-
-export function getOrg(): Org {
-  return org;
+// Guarded by the shared store, not module-load order: whichever
+// compilation layer (Route Handler, Page, Proxy) happens to load this
+// module first seeds the shared arrays; every other layer sees
+// `store.seeded` already true (same global object) and reuses them as-is.
+if (!store.seeded) {
+  seed();
+  store.seeded = true;
 }
 
-export function getCoach(): Coach {
+// ---- Auth: coaches, accounts, sessions ---------------------------------
+
+export function getOrg(orgId: string): Org | undefined {
+  return orgs.find((o) => o.id === orgId);
+}
+
+export function getCoach(coachId: string): Coach | undefined {
+  return coaches.find((c) => c.id === coachId);
+}
+
+export function findCoachByEmail(email: string): Coach | undefined {
+  return coaches.find((c) => c.email.toLowerCase() === email.toLowerCase());
+}
+
+export function findAthleteByEmail(email: string): Athlete | undefined {
+  return athletes.find((a) => a.email.toLowerCase() === email.toLowerCase());
+}
+
+/** True if any coach or athlete already uses this email — invites and signup both check this. */
+export function isEmailTaken(email: string): boolean {
+  return Boolean(findCoachByEmail(email) || findAthleteByEmail(email));
+}
+
+/**
+ * Coach self-signup: creates a brand-new Org and Coach together (there's no
+ * "join an existing org" flow yet — every coach who signs up starts their
+ * own, empty roster, and invites athletes into it from there).
+ */
+export function createCoachAccount(input: { orgName: string; name: string; email: string; passwordHash: string }): Coach {
+  const org: Org = { id: id("org"), name: input.orgName };
+  orgs.push(org);
+  const coach: Coach = {
+    id: id("coach"),
+    orgId: org.id,
+    name: input.name,
+    email: input.email,
+    passwordHash: input.passwordHash,
+  };
+  coaches.push(coach);
   return coach;
 }
 
-export function listAthletes(): Athlete[] {
-  return athletes;
+/**
+ * Creates the invited athlete's record up front, in INVITED status — there
+ * is no separate "invite" entity; the Athlete row itself carries the
+ * pending token until accepted (or revoked). This mirrors the flat style
+ * of the rest of this file more than a fully normalized invites table
+ * would, at the cost of losing history for revoked/expired invites.
+ */
+export function createAthleteInvite(input: {
+  orgId: string;
+  coachId: string;
+  name: string;
+  email: string;
+  sport: Athlete["sport"];
+}): Athlete {
+  const athlete: Athlete = {
+    id: id("ath"),
+    orgId: input.orgId,
+    coachId: input.coachId,
+    name: input.name,
+    email: input.email,
+    sport: input.sport,
+    hasWearable: false,
+    status: "INVITED",
+    passwordHash: null,
+    inviteToken: generateInviteToken(),
+    inviteExpiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+  };
+  athletes.push(athlete);
+  return athlete;
 }
+
+/** Invites this coach has sent that are still awaiting acceptance. */
+export function getPendingInvites(coachId: string): Athlete[] {
+  return athletes.filter((a) => a.coachId === coachId && a.status === "INVITED");
+}
+
+/** Cancels a pending invite. Only the inviting coach can revoke it; a no-op otherwise. */
+export function revokeInvite(athleteId: string, coachId: string): boolean {
+  const index = athletes.findIndex((a) => a.id === athleteId && a.coachId === coachId && a.status === "INVITED");
+  if (index === -1) return false;
+  athletes.splice(index, 1);
+  return true;
+}
+
+/** Looks up a pending, unexpired invite by its token — used by the public accept-invite page. */
+export function getAthleteByInviteToken(token: string): Athlete | undefined {
+  return athletes.find(
+    (a) =>
+      a.inviteToken === token &&
+      a.status === "INVITED" &&
+      a.inviteExpiresAt !== null &&
+      new Date(a.inviteExpiresAt).getTime() > Date.now(),
+  );
+}
+
+/** Activates an invited athlete's account with the password they just set. */
+export function acceptAthleteInvite(input: { token: string; passwordHash: string }): Athlete {
+  const athlete = getAthleteByInviteToken(input.token);
+  if (!athlete) throw new Error("convite inválido ou expirado");
+  athlete.status = "ACTIVE";
+  athlete.passwordHash = input.passwordHash;
+  athlete.inviteToken = null;
+  athlete.inviteExpiresAt = null;
+  return athlete;
+}
+
+// ---- Read API (roster, athlete detail) --------------------------------
 
 export function getAthlete(athleteId: string): Athlete | undefined {
   return athletes.find((a) => a.id === athleteId);
@@ -301,8 +490,9 @@ export function getAthleteLoadSummary(athleteId: string): AthleteLoadSummary {
   };
 }
 
-export function getRoster(): AthleteLoadSummary[] {
-  return athletes.map((a) => getAthleteLoadSummary(a.id));
+/** Active athletes on this coach's roster. Pending invites are listed separately — see getPendingInvites. */
+export function getRoster(coachId: string): AthleteLoadSummary[] {
+  return athletes.filter((a) => a.coachId === coachId && a.status === "ACTIVE").map((a) => getAthleteLoadSummary(a.id));
 }
 
 export function getWellnessHistory(athleteId: string, days = 7): WellnessCheckin[] {
@@ -394,9 +584,4 @@ export function addPainReport(input: {
   };
   painReports.push(report);
   return report;
-}
-
-/** The athlete used by the check-in/progress pages until real auth exists. */
-export function getDemoAthleteId(): string {
-  return athletes[0].id;
 }

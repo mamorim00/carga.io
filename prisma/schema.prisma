@@ -45,16 +45,27 @@ enum AcwrZone {
   RISK
 }
 
+// ACTIVE once the athlete has followed their invite link and set a
+// password; INVITED from the moment a coach sends the invite until then.
+enum AthleteStatus {
+  INVITED
+  ACTIVE
+}
+
 model Org {
   id        String   @id @default(cuid())
   name      String
   createdAt DateTime @default(now())
 
+  coaches  Coach[]
   members  Membership[]
   athletes Athlete[]
   alerts   AlertRule[]
 }
 
+// Kept for the richer future RBAC in the Role enum (assistant coaches,
+// physios, org admins on the same org) — not used by the credentials login
+// below, which is 1 Coach account : 1 Org, created at signup.
 model Membership {
   id     String @id @default(cuid())
   userId String
@@ -66,27 +77,37 @@ model Membership {
   @@unique([userId, orgId])
 }
 
+// Coach signup creates both the Org and the Coach account together
+// (orgName + name + email + password) — there's no separate User/identity
+// table; passwordHash lives directly on Coach.
 model Coach {
-  id     String @id @default(cuid())
-  userId String @unique
-  name   String
-  email  String @unique
+  id           String @id @default(cuid())
+  orgId        String
+  name         String
+  email        String @unique
+  passwordHash String
 
+  org      Org       @relation(fields: [orgId], references: [id])
   athletes Athlete[]
 }
 
 model Athlete {
-  id        String   @id @default(cuid())
-  userId    String   @unique
+  id        String        @id @default(cuid())
   orgId     String
-  coachId   String?
+  coachId   String
   name      String
-  email     String   @unique
+  email     String        @unique
   sport     Sport
-  createdAt DateTime @default(now())
+  status    AthleteStatus @default(INVITED)
+  createdAt DateTime      @default(now())
 
-  org   Org    @relation(fields: [orgId], references: [id])
-  coach Coach? @relation(fields: [coachId], references: [id])
+  // Set once the invite is accepted; null while status is INVITED.
+  passwordHash    String?
+  inviteToken     String?   @unique
+  inviteExpiresAt DateTime?
+
+  org   Org   @relation(fields: [orgId], references: [id])
+  coach Coach @relation(fields: [coachId], references: [id])
 
   activities       Activity[]
   sessionReports   SessionReport[]
