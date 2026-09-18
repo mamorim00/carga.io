@@ -1,21 +1,7 @@
+import Link from "next/link";
 import { getCoach, getOrg, getRoster } from "@/lib/data";
+import { ZONE_STYLE, timeAgo } from "@/lib/presentation";
 import type { AcwrZone } from "@/lib/types";
-
-const ZONE_STYLE: Record<AcwrZone, { dot: string; border: string; text: string }> = {
-  IDEAL: { dot: "var(--ok)", border: "var(--line)", text: "var(--ok)" },
-  ATTENTION: { dot: "var(--warn)", border: "#ebd2a6", text: "var(--warn)" },
-  RISK: { dot: "var(--risk)", border: "#e3b7b3", text: "var(--risk)" },
-};
-
-function timeAgo(iso: string | null): string {
-  if (!iso) return "nunca sincronizou";
-  const ms = Date.now() - new Date(iso).getTime();
-  const hours = Math.floor(ms / 3_600_000);
-  if (hours < 1) return "há poucos min";
-  if (hours < 24) return `há ${hours} h`;
-  const days = Math.floor(hours / 24);
-  return days === 1 ? "há 1 dia" : `sem sinc. há ${days} dias`;
-}
 
 export default async function DashboardPage() {
   const org = getOrg();
@@ -99,9 +85,10 @@ export default async function DashboardPage() {
             {roster.map((a) => {
               const style = a.zone ? ZONE_STYLE[a.zone] : { dot: "#9aa69f", border: "var(--line)", text: "#9aa69f" };
               return (
-                <div
+                <Link
                   key={a.athleteId}
-                  className="flex flex-col gap-3 rounded-lg border bg-surface p-4"
+                  href={`/dashboard/${a.athleteId}`}
+                  className="flex flex-col gap-3 rounded-lg border bg-surface p-4 transition-colors hover:border-ink"
                   style={{ borderColor: style.border }}
                 >
                   <div className="flex items-center justify-between">
@@ -115,7 +102,7 @@ export default async function DashboardPage() {
                     </span>
                     <span className="text-[11px] text-muted">{a.weeklyLoad} UA/sem</span>
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>
@@ -141,14 +128,15 @@ export default async function DashboardPage() {
                   }}
                 >
                   {lane.athletes.map((a) => (
-                    <div
+                    <Link
                       key={a.athleteId}
+                      href={`/dashboard/${a.athleteId}`}
                       title={a.name}
                       className="flex h-5.5 w-5.5 items-center justify-center rounded-[4px] text-[9px] font-bold text-paper"
                       style={{ background: ZONE_STYLE[lane.zone].dot }}
                     >
                       {a.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}
-                    </div>
+                    </Link>
                   ))}
                 </div>
               </div>

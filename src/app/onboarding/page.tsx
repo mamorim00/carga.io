@@ -9,11 +9,11 @@ export default function OnboardingPage() {
           <span className="text-xs font-bold tracking-[0.12em] text-[#b8b4a8] uppercase">Carga</span>
         </div>
         <h1 className="font-display text-[34px] leading-tight font-semibold text-paper">
-          A parte objetiva da carga, sem o atleta digitar nada.
+          Carga de treino e atividade, no mesmo lugar.
         </h1>
         <p className="max-w-xs text-sm leading-relaxed text-[#8b8878]">
-          Sincronizamos a atividade do dispositivo automaticamente. Depois, perguntamos só o que o corpo sabe e o
-          relógio não mede.
+          Cada treino entra com duração, distância e frequência cardíaca — do relógio ou registrado à mão. O
+          check-in rápido de esforço e bem-estar completa o que só o corpo sabe.
         </p>
       </div>
 

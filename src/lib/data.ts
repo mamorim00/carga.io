@@ -231,6 +231,21 @@ export function getLatestUnreportedActivity(athleteId: string): Activity | undef
   return getAthleteActivities(athleteId).find((a) => !a.hasSessionReport);
 }
 
+export interface ActivityFeedItem extends Activity {
+  /** RPE from the linked session report, once the athlete has checked in. */
+  rpe: number | null;
+}
+
+/** Recent activities for an athlete, most recent first, joined with their RPE if reported. */
+export function getAthleteActivityFeed(athleteId: string, limit = 10): ActivityFeedItem[] {
+  return getAthleteActivities(athleteId)
+    .slice(0, limit)
+    .map((activity) => ({
+      ...activity,
+      rpe: sessionReports.find((r) => r.activityId === activity.id)?.rpe ?? null,
+    }));
+}
+
 export function getAthleteLoadSummary(athleteId: string): AthleteLoadSummary {
   const athlete = getAthlete(athleteId);
   if (!athlete) throw new Error(`unknown athlete ${athleteId}`);

@@ -1,17 +1,16 @@
 import Link from "next/link";
-import { getAthlete, getAthleteLoadSummary, getDemoAthleteId } from "@/lib/data";
-
-const ZONE_COPY: Record<string, { label: string; note: string }> = {
-  IDEAL: { label: "Zona ideal", note: "Carga aguda equilibrada com a crônica. Siga a progressão da semana." },
-  ATTENTION: { label: "Atenção", note: "Carga se afastando da faixa ideal. Vale monitorar de perto." },
-  RISK: { label: "Risco elevado", note: "ACWR acima do recomendado. Considere reduzir volume esta semana." },
-};
+import { ActivityFeed } from "@/components/ActivityFeed";
+import { getAthlete, getAthleteActivityFeed, getAthleteLoadSummary, getDemoAthleteId } from "@/lib/data";
+import { ZONE_LABEL, ZONE_NOTE } from "@/lib/presentation";
 
 export default async function ProgressPage() {
   const athleteId = getDemoAthleteId();
   const athlete = getAthlete(athleteId)!;
   const summary = getAthleteLoadSummary(athleteId);
-  const zone = summary.zone ? ZONE_COPY[summary.zone] : null;
+  const activities = getAthleteActivityFeed(athleteId, 5);
+  const zone = summary.zone
+    ? { label: ZONE_LABEL[summary.zone], note: ZONE_NOTE[summary.zone] }
+    : null;
 
   const maxLoad = Math.max(...summary.last7Days, 1);
   const days = ["S", "T", "Q", "Q", "S", "S", "D"];
@@ -65,6 +64,14 @@ export default async function ProgressPage() {
         <span className="text-[13px] font-medium text-ink">Fazer novo check-in</span>
         <span className="text-muted">→</span>
       </Link>
+
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[13.5px] font-semibold text-ink">Atividades recentes</span>
+          <span className="text-[11px] text-muted">duração, distância e FC</span>
+        </div>
+        <ActivityFeed activities={activities} />
+      </div>
     </main>
   );
 }

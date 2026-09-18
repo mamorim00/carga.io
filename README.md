@@ -13,9 +13,15 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
   1:1 com `prisma/schema.prisma`, o schema real do produto — trocar essa camada por Prisma + Postgres não muda
   as páginas ou rotas acima dela.
 - **Fluxo do atleta**: onboarding → conectar Strava (simulado) ou registrar treino manualmente (sem relógio) →
-  check-in de RPE (CR-10) + bem-estar → progresso pessoal (ACWR, carga semanal, bem-estar).
+  check-in de RPE (CR-10) + bem-estar → progresso pessoal (ACWR, carga semanal, bem-estar, atividades recentes).
+  A carga é sempre a combinação de duas partes — a atividade (duração, distância, FC, de onde veio) e o check-in
+  (RPE + bem-estar) — nunca uma automação que dispensa o check-in.
 - **Painel do treinador**: elenco com status de ACWR por atleta, carga semanal, e faixas de risco (ideal / atenção
-  / risco) agrupando o elenco inteiro.
+  / risco) agrupando o elenco inteiro; cada atleta abre em `/dashboard/[athleteId]` com ACWR, carga semanal,
+  atividades recentes e bem-estar recente.
+- **Feed de atividades** (`src/lib/data.ts#getAthleteActivityFeed`, `src/components/ActivityFeed.tsx`): junta cada
+  atividade com o RPE do check-in correspondente (quando já enviado), usado tanto no progresso do atleta quanto no
+  detalhe do atleta no painel do treinador.
 - **API**: `POST /api/activities/manual` (registro manual de treino) e `POST /api/checkin` (RPE + bem-estar),
   ambos validados.
 
@@ -24,7 +30,7 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
 ```bash
 npm install
 npm run dev       # http://localhost:3000
-npm test          # 24 testes (motor de métricas + camada de dados)
+npm test          # 26 testes (motor de métricas + camada de dados)
 npm run lint
 ```
 
