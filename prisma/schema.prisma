@@ -1,0 +1,193 @@
+// Carga — data model (Phase 1 MVP)
+// NOTE: This schema is the source of truth for the production data model.
+// `prisma generate` needs outbound access to binaries.prisma.sh to fetch the
+// query engine, which this sandbox's egress policy blocks — so the app
+// currently runs against an in-memory data layer (see src/lib/data.ts) that
+// mirrors these shapes. Point DATABASE_URL at a real Postgres instance and
+// run `npx prisma generate && npx prisma migrate dev` in an environment with
+// normal network access to switch over.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  HEAD_COACH
+  ASSISTANT_COACH
+  PHYSIO
+  PHYSIOLOGIST
+  ATHLETE
+  ORG_ADMIN
+}
+
+enum Sport {
+  RUNNING
+  CYCLING
+  TRIATHLON
+  OTHER
+}
+
+enum ActivitySource {
+  STRAVA
+  GARMIN
+  APPLE_HEALTH
+  MANUAL
+}
+
+enum AcwrZone {
+  IDEAL
+  ATTENTION
+  RISK
+}
+
+model Org {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  members  Membership[]
+  athletes Athlete[]
+  alerts   AlertRule[]
+}
+
+model Membership {
+  id     String @id @default(cuid())
+  userId String
+  orgId  String
+  role   Role
+
+  org Org @relation(fields: [orgId], references: [id])
+
+  @@unique([userId, orgId])
+}
+
+model Coach {
+  id     String @id @default(cuid())
+  userId String @unique
+  name   String
+  email  String @unique
+
+  athletes Athlete[]
+}
+
+model Athlete {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  orgId     String
+  coachId   String?
+  name      String
+  email     String   @unique
+  sport     Sport
+  createdAt DateTime @default(now())
+
+  org   Org    @relation(fields: [orgId], references: [id])
+  coach Coach? @relation(fields: [coachId], references: [id])
+
+  activities       Activity[]
+  sessionReports   SessionReport[]
+  wellnessCheckins WellnessCheckin[]
+  painReports      PainReport[]
+  cycleLogs        CycleLog[]
+  loadSnapshots    LoadSnapshot[]
+}
+
+model Activity {
+  id          String         @id @default(cuid())
+  athleteId   String
+  source      ActivitySource
+  startedAt   DateTime
+  durationMin Float
+  distanceKm  Float?
+  avgHr       Int?
+  hrZones     Json? // minutes per HR zone, when the wearable provides it
+  elevationM  Float?
+  externalId  String? // id on the source platform (e.g. Strava activity id)
+  createdAt   DateTime       @default(now())
+
+  athlete       Athlete        @relation(fields: [athleteId], references: [id])
+  sessionReport SessionReport?
+}
+
+// The athlete's subjective RPE + notes for one activity (Foster CR-10).
+model SessionReport {
+  id         String   @id @default(cuid())
+  athleteId  String
+  activityId String   @unique
+  rpe        Int // 1–10, Foster CR-10 scale
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  athlete  Athlete  @relation(fields: [athleteId], references: [id])
+  activity Activity @relation(fields: [activityId], references: [id])
+}
+
+model WellnessCheckin {
+  id        String   @id @default(cuid())
+  athleteId String
+  date      DateTime @default(now())
+  sleep     Int // 1–5
+  soreness  Int // 1–5
+  mood      Int // 1–5
+  stress    Int // 1–5
+  hydration Int? // 1–5
+
+  athlete Athlete @relation(fields: [athleteId], references: [id])
+
+  @@unique([athleteId, date])
+}
+
+model PainReport {
+  id        String   @id @default(cuid())
+  athleteId String
+  bodyPart  String
+  intensity Int // 1–10
+  note      String?
+  createdAt DateTime @default(now())
+
+  athlete Athlete @relation(fields: [athleteId], references: [id])
+}
+
+model CycleLog {
+  id        String   @id @default(cuid())
+  athleteId String
+  date      DateTime
+  flow      String? // none | light | medium | heavy
+  symptoms  String[]
+  phase     String? // menstrual | follicular | ovulation | luteal
+
+  athlete Athlete @relation(fields: [athleteId], references: [id])
+}
+
+// Precomputed daily load metrics per athlete — written by the metrics
+// engine (src/lib/metrics.ts) whenever a new SessionReport/Activity lands.
+model LoadSnapshot {
+  id             String   @id @default(cuid())
+  athleteId      String
+  date           DateTime
+  internalLoad   Float
+  externalLoad   Float?
+  combinedLoad   Float
+  monotony       Float?
+  strain         Float?
+  acwr           Float?
+  acwrZone       AcwrZone?
+
+  athlete Athlete @relation(fields: [athleteId], references: [id])
+
+  @@unique([athleteId, date])
+}
+
+model AlertRule {
+  id        String   @id @default(cuid())
+  orgId     String
+  kind      String // "acwr_spike" | "sync_stale"
+  threshold Float?
+  createdAt DateTime @default(now())
+
+  org Org @relation(fields: [orgId], references: [id])
+}

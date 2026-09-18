@@ -1,0 +1,27 @@
+import { getAthlete, getDemoAthleteId, getLatestUnreportedActivity } from "@/lib/data";
+import { CheckinForm } from "./CheckinForm";
+
+export default async function CheckinPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ manual?: string }>;
+}) {
+  const { manual } = await searchParams;
+  const athleteId = getDemoAthleteId();
+  const athlete = getAthlete(athleteId)!;
+  const pendingActivity = getLatestUnreportedActivity(athleteId) ?? null;
+
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-md flex-col bg-paper">
+      <div className="flex items-center gap-3.5 border-b border-line px-6 py-5">
+        <span className="font-display text-lg font-semibold text-ink">Check-in pós-treino</span>
+      </div>
+      <CheckinForm
+        athleteId={athlete.id}
+        athleteName={athlete.name}
+        forceManual={manual === "1" && !pendingActivity}
+        pendingActivity={pendingActivity}
+      />
+    </main>
+  );
+}
