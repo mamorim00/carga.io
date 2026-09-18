@@ -4,6 +4,7 @@ import {
   getAthlete,
   getAthleteActivityFeed,
   getLatestUnreportedActivity,
+  getWellnessHistory,
   submitCheckin,
   addManualActivity,
 } from "./data";
@@ -32,6 +33,21 @@ describe("seeded roster", () => {
   it("marks the wearable-less athlete as such, with a stale sync", () => {
     const thiago = roster.find((a) => a.name === "Thiago Nunes")!;
     expect(thiago.hasWearable).toBe(false);
+  });
+});
+
+describe("seeded wellness history", () => {
+  it("gives every seeded athlete recent wellness check-ins", () => {
+    for (const a of getRoster()) {
+      expect(getWellnessHistory(a.athleteId).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("has the at-risk athlete's wellness reflect her load spike, not just her ACWR", () => {
+    const camila = getRoster().find((a) => a.name === "Camila Souza")!;
+    const [latest] = getWellnessHistory(camila.athleteId, 1);
+    expect(latest.sleep).toBeLessThanOrEqual(2);
+    expect(latest.soreness).toBeGreaterThanOrEqual(4);
   });
 });
 

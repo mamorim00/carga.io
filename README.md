@@ -9,9 +9,11 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
   híbrida de carga externa. 17 testes unitários.
 - **Camada de dados** (`src/lib/data.ts`): hoje em memória, com um elenco de exemplo já semeado com 40 dias de
   histórico (um atleta em zona de risco, um em atenção, o resto ideal, e um atleta sem wearable que registra
-  manualmente) para que o painel e o progresso mostrem números reais desde o primeiro `npm run dev`. Documentado
-  1:1 com `prisma/schema.prisma`, o schema real do produto — trocar essa camada por Prisma + Postgres não muda
-  as páginas ou rotas acima dela.
+  manualmente) para que o painel e o progresso mostrem números reais desde o primeiro `npm run dev`. Cada dia
+  treinado também vem com um check-in de bem-estar coerente com a história do atleta — a de risco tem sono e
+  humor caindo e dor/estresse subindo bem no bloco pesado dos últimos 7 dias; as em zona ideal ficam estáveis — em
+  vez de zerado até alguém preencher o formulário na sessão atual. Documentado 1:1 com `prisma/schema.prisma`, o
+  schema real do produto — trocar essa camada por Prisma + Postgres não muda as páginas ou rotas acima dela.
 - **Fluxo do atleta**: onboarding → conectar Strava (simulado) ou registrar treino manualmente (sem relógio) →
   check-in de RPE (CR-10) + bem-estar → progresso pessoal (ACWR, carga semanal, bem-estar, atividades recentes).
   A carga é sempre a combinação de duas partes — a atividade (duração, distância, FC, de onde veio) e o check-in
@@ -30,7 +32,7 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
 ```bash
 npm install
 npm run dev       # http://localhost:3000
-npm test          # 26 testes (motor de métricas + camada de dados)
+npm test          # 28 testes (motor de métricas + camada de dados)
 npm run lint
 ```
 

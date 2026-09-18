@@ -48,20 +48,27 @@ function isoDaysAgo(days: number): string {
   return d.toISOString();
 }
 
+type WellnessCurve = (dayIndex: number) => Pick<WellnessCheckin, "sleep" | "soreness" | "mood" | "stress">;
+
 /**
  * Builds `days` days of activity history for one athlete (oldest first),
  * using a per-day RPE/duration curve, and returns the combined daily loads
- * alongside the created Activity/SessionReport rows.
+ * alongside the created Activity/SessionReport rows. When `wellness` is
+ * given, every trained day also gets a WellnessCheckin — mirroring the real
+ * check-in flow, where a session report and a wellness check-in are
+ * submitted together.
  */
 function seedHistory(
   athleteId: string,
   days: number,
   curve: (dayIndex: number) => { rpe: number; durationMin: number } | null,
   source: Activity["source"],
+  wellness?: WellnessCurve,
 ) {
   const loads: number[] = [];
   for (let dayIndex = days - 1; dayIndex >= 0; dayIndex--) {
-    const session = curve(days - 1 - dayIndex);
+    const relativeDay = days - 1 - dayIndex;
+    const session = curve(relativeDay);
     if (!session) {
       loads.push(0);
       continue;
@@ -95,6 +102,14 @@ function seedHistory(
       rpe: session.rpe,
       createdAt: isoDaysAgo(dayIndex),
     });
+    if (wellness) {
+      wellnessCheckins.push({
+        id: id("wc"),
+        athleteId,
+        date: isoDaysAgo(dayIndex),
+        ...wellness(relativeDay),
+      });
+    }
     const internal = internalLoad(session.rpe, session.durationMin);
     const external = hrZones ? externalLoadFromHrZones(hrZones) : undefined;
     loads.push(combinedLoad(internal, external));
@@ -108,6 +123,7 @@ function seedAthlete(opts: {
   sport: Athlete["sport"];
   hasWearable: boolean;
   curve: (dayIndex: number) => { rpe: number; durationMin: number } | null;
+  wellness?: WellnessCurve;
   source: Activity["source"];
 }): { athlete: Athlete; loads: number[] } {
   const athlete: Athlete = {
@@ -120,14 +136,14 @@ function seedAthlete(opts: {
     hasWearable: opts.hasWearable,
   };
   athletes.push(athlete);
-  const loads = seedHistory(athlete.id, 40, opts.curve, opts.source);
+  const loads = seedHistory(athlete.id, 40, opts.curve, opts.source, opts.wellness);
   return { athlete, loads };
 }
 
 const loadsByAthlete = new Map<string, number[]>();
 
 function seed() {
-  // Steady, well-managed load → IDEAL.
+  // Steady, well-managed load → IDEAL. Wellness matches: consistently good.
   const marina = seedAthlete({
     name: "Marina Alves",
     email: "marina.alves@atleta.com",
@@ -135,6 +151,7 @@ function seed() {
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => (d % 2 === 0 ? { rpe: 5 + (d % 3), durationMin: 35 + (d % 4) * 5 } : null),
+    wellness: (d) => ({ sleep: 4 + (d % 2), soreness: 1 + (d % 2), mood: 5 - (d % 2), stress: 1 + (d % 2) }),
   });
   loadsByAthlete.set(marina.athlete.id, marina.loads);
 
@@ -145,10 +162,12 @@ function seed() {
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => (d % 2 === 1 ? { rpe: 4 + (d % 4), durationMin: 40 + (d % 5) * 4 } : null),
+    wellness: (d) => ({ sleep: 4, soreness: 2 + (d % 2), mood: 4, stress: 1 + (d % 2) }),
   });
   loadsByAthlete.set(diego.athlete.id, diego.loads);
 
-  // Sharp spike in the last 7 days → RISK.
+  // Sharp spike in the last 7 days → RISK. Wellness degrades right along with it:
+  // sleep and mood drop, soreness and stress climb once the heavy block starts.
   const camila = seedAthlete({
     name: "Camila Souza",
     email: "camila.souza@atleta.com",
@@ -159,10 +178,14 @@ function seed() {
       if (d >= 33) return { rpe: 6 + (d % 3), durationMin: 55 + (d % 3) * 6 }; // last 7 days: heavy
       return d % 2 === 0 ? { rpe: 5, durationMin: 32 } : null;
     },
+    wellness: (d) =>
+      d >= 33
+        ? { sleep: 2, soreness: 5, mood: 2, stress: 4 + (d % 2) }
+        : { sleep: 4, soreness: 2, mood: 4, stress: 2 },
   });
   loadsByAthlete.set(camila.athlete.id, camila.loads);
 
-  // Trending up but not yet critical → ATTENTION.
+  // Trending up but not yet critical → ATTENTION. Wellness slides down the same ramp.
   const bruno = seedAthlete({
     name: "Bruno Castro",
     email: "bruno.castro@atleta.com",
@@ -172,6 +195,15 @@ function seed() {
     curve: (d) => {
       const ramp = Math.min(d / 39, 1);
       return d % 2 === 0 ? { rpe: 5 + Math.round(ramp * 3), durationMin: 40 + ramp * 25 } : null;
+    },
+    wellness: (d) => {
+      const ramp = Math.min(d / 39, 1);
+      return {
+        sleep: Math.max(2, Math.round(4 - ramp * 2)),
+        soreness: Math.min(5, Math.round(1 + ramp * 3)),
+        mood: Math.max(2, Math.round(4 - ramp * 2)),
+        stress: Math.min(5, Math.round(1 + ramp * 3)),
+      };
     },
   });
   loadsByAthlete.set(bruno.athlete.id, bruno.loads);
@@ -183,10 +215,12 @@ function seed() {
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => (d % 2 === 0 ? { rpe: 5, durationMin: 38 } : null),
+    wellness: () => ({ sleep: 4, soreness: 2, mood: 4, stress: 2 }),
   });
   loadsByAthlete.set(ana.athlete.id, ana.loads);
 
   // No wearable at all — logs manually, and hasn't in a few days (stale sync).
+  // Wellness is a bit more tired overall: sparser, harder sessions with less recovery in between.
   const thiago = seedAthlete({
     name: "Thiago Nunes",
     email: "thiago.nunes@atleta.com",
@@ -197,6 +231,7 @@ function seed() {
       if (d >= 35) return null; // nothing logged in the last ~5 days
       return d % 3 === 0 ? { rpe: 6, durationMin: 45 } : null;
     },
+    wellness: () => ({ sleep: 3, soreness: 3, mood: 3, stress: 3 }),
   });
   loadsByAthlete.set(thiago.athlete.id, thiago.loads);
 }
