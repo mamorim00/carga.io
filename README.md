@@ -106,14 +106,21 @@ abaixo); é `db push` aplicando o schema diretamente, aceitável nesta fase, mas
 - `next/font/google` foi trocado por uma pilha de fontes do sistema em `src/app/layout.tsx` porque o sandbox de
   build não tinha acesso de saída a `fonts.googleapis.com` — troque de volta (ou self-host com `next/font/local`)
   em qualquer ambiente com acesso normal à rede.
-- Migração para Postgres real: **feita, mas não testada localmente** — só verificada pelo deploy real do Vercel.
-  O sandbox onde isto foi escrito bloqueia conexão direta (TCP bruto) a bancos Postgres por política de rede —
-  só HTTPS passa. `prisma generate` funciona aqui (baixa o engine via HTTPS de `binaries.prisma.sh`), mas
-  `prisma db push`/qualquer query real contra `PRISMA_DATABASE_URL` não — `P1001: Can't reach database server`.
-  Por isso todo `src/lib/data.ts` (e os ~20 arquivos que o chamam) foi escrito e compilado (`next build` tipa
-  contra os tipos gerados do Prisma sem precisar de conexão real) sem nunca rodar contra o banco de verdade — a
-  primeira execução real acontece no build/runtime do próprio Vercel, que tem rede normal. Se algo se comportar
-  diferente do esperado em produção, comece por aí, não por aqui.
+- Migração para Postgres real: **feita, deploy confirmado, fluxo de login não testado por mim**. O sandbox onde
+  isto foi escrito bloqueia conexão direta (TCP bruto) a bancos Postgres por política de rede — só HTTPS passa.
+  `prisma generate` funciona aqui (baixa o engine via HTTPS de `binaries.prisma.sh`), mas `prisma db push`/
+  qualquer query real contra `PRISMA_DATABASE_URL` não — `P1001: Can't reach database server`. Por isso todo
+  `src/lib/data.ts` (e os ~20 arquivos que o chamam) foi escrito e compilado (`next build` tipa contra os tipos
+  gerados do Prisma sem precisar de conexão real) sem nunca rodar contra o banco de verdade. O build do Vercel
+  para o commit desta migração **terminou com sucesso** (status `Vercel: Deployment has completed`, mais
+  GitGuardian e Vercel Preview Comments verdes) — como `prisma db push` roda antes do `next build` nesse
+  ambiente, isso é evidência forte de que o schema foi aplicado e o client do Prisma funciona contra o banco
+  real. O que eu **não** consegui fazer: abrir a própria URL de preview (`*.vercel.app`) para clicar no fluxo de
+  login/painel — a política de rede deste sandbox também bloqueia domínios HTTPS fora de uma lista permitida, e
+  esse domínio não está nela (erro `EGRESS_BLOCKED`/403, o mesmo tipo de bloqueio do Postgres, só que para
+  domínios web em geral). Alguém com acesso normal à internet precisa abrir a preview e confirmar que
+  `rafael@fundobh.com.br` / `carga1234` loga e que `/dashboard` mostra o elenco semeado com ACWR de verdade —
+  isso ainda não foi verificado ponta a ponta por ninguém.
 - `SESSION_SECRET` não está definida em lugar nenhum — sem ela, as sessões são assinadas com uma chave de
   desenvolvimento fixa e pública (ver `src/lib/session-token.ts`), o que é aceitável para rodar localmente mas
   **nunca** em produção. Defina `SESSION_SECRET` (ex.: `openssl rand -base64 32`) nas variáveis de ambiente do
@@ -123,7 +130,8 @@ abaixo); é `db push` aplicando o schema diretamente, aceitável nesta fase, mas
 
 Lista completa e detalhada, com o que já está pronto e o que falta, em `docs/mvp-tasks.md`. Prioridades imediatas:
 
-- [x] Trocar `src/lib/data.ts` por Prisma + Postgres — feito (ver acima); falta só confirmar no deploy real
+- [x] Trocar `src/lib/data.ts` por Prisma + Postgres — feito, build do Vercel passou; falta alguém com acesso
+      normal à internet confirmar o login/painel na preview (ver acima)
 - [ ] OAuth real do Strava (hoje o botão só simula a conexão)
 - [ ] Enviar o link de convite por e-mail de verdade, em vez de só mostrar na tela do treinador
 - [ ] RBAC mais rico (assistente técnico, fisio, fisiologista, admin de org — o enum `Role` já existe no schema)

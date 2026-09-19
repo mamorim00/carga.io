@@ -142,8 +142,12 @@ something from you first.
    ACWR/monotony/strain recomputed from raw activity/check-in rows on every read instead of a
    stored running total. `npm run build` runs `prisma db push` before `next build`. **Caveat**:
    built and typechecked without ever reaching the real database — this sandbox can't make a raw
-   TCP connection to Postgres, only HTTPS. Verified only via the live Vercel deploy, not locally.
-   See README.md for the full story.
+   TCP connection to Postgres, only HTTPS. The Vercel deploy for this commit succeeded (`prisma db
+   push` runs as part of that build, so a green build is real evidence the schema applied against
+   the actual database) — but I also can't reach the `*.vercel.app` preview URL itself from this
+   sandbox (same network policy, blocks general web egress outside an allowlist too, not just the
+   database), so nobody has actually clicked through login → dashboard on the live deploy yet. See
+   README.md for the exact state and what's left to confirm.
 
 ### Needs something from you before I can build it for real
 
