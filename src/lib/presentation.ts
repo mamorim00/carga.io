@@ -3,7 +3,7 @@
 // activity source, relative dates). Kept separate from lib/data.ts because
 // none of this is queried or persisted — it only shapes what's already read.
 
-import type { AcwrZone, ActivitySource, BodyPart, Sex, Sport } from "./types";
+import type { AcwrZone, ActivitySource, BodyPart, CycleFlow, CyclePhase, CycleSymptom, Sex, Sport } from "./types";
 
 export const SPORT_LABEL: Record<Sport, string> = {
   RUNNING: "Corrida",
@@ -62,6 +62,28 @@ export const BODY_PART_LABEL: Record<BodyPart, string> = {
   LOWER_BACK: "Lombar",
 };
 
+export const FLOW_LABEL: Record<CycleFlow, string> = {
+  NONE: "Sem fluxo",
+  LIGHT: "Leve",
+  MEDIUM: "Moderado",
+  HEAVY: "Intenso",
+};
+
+export const PHASE_LABEL: Record<CyclePhase, string> = {
+  MENSTRUAL: "Menstrual",
+  FOLLICULAR: "Folicular",
+  OVULATION: "Ovulação",
+  LUTEAL: "Lútea",
+};
+
+export const SYMPTOM_LABEL: Record<CycleSymptom, string> = {
+  CRAMPS: "Cólica",
+  FATIGUE: "Fadiga",
+  HEADACHE: "Dor de cabeça",
+  BLOATING: "Inchaço",
+  MOOD_SWINGS: "Alteração de humor",
+};
+
 export const ZONE_LABEL: Record<AcwrZone, string> = {
   IDEAL: "Zona ideal",
   ATTENTION: "Atenção",
@@ -101,6 +123,18 @@ export function timeAgo(iso: string | null): string {
 /** Short absolute date for activity feed rows, e.g. "12 mar". */
 export function formatActivityDate(iso: string): string {
   return new Date(iso).toLocaleDateString("pt-BR", { day: "numeric", month: "short" });
+}
+
+// No specific threshold appears in the sports-science literature the rest of
+// this app cites (ACWR, monotony) — 3 days is this app's own choice, matching
+// the number already floated for it in docs/mvp-tasks.md.
+const NON_COMPLIANCE_THRESHOLD_DAYS = 3;
+
+/** True once an athlete has gone NON_COMPLIANCE_THRESHOLD_DAYS+ without a synced or logged activity. */
+export function isNonCompliant(lastSyncedAt: string | null): boolean {
+  if (!lastSyncedAt) return true;
+  const days = (Date.now() - new Date(lastSyncedAt).getTime()) / 86_400_000;
+  return days >= NON_COMPLIANCE_THRESHOLD_DAYS;
 }
 
 // Foster's own monotony scale doesn't have a single official cutoff the way

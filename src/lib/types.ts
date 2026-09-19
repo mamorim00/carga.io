@@ -38,6 +38,12 @@ export const BODY_PARTS = [
 ] as const;
 export type BodyPart = (typeof BODY_PARTS)[number];
 
+export type CycleFlow = "NONE" | "LIGHT" | "MEDIUM" | "HEAVY";
+export type CyclePhase = "MENSTRUAL" | "FOLLICULAR" | "OVULATION" | "LUTEAL";
+
+export const CYCLE_SYMPTOMS = ["CRAMPS", "FATIGUE", "HEADACHE", "BLOATING", "MOOD_SWINGS"] as const;
+export type CycleSymptom = (typeof CYCLE_SYMPTOMS)[number];
+
 export interface Org {
   id: string;
   name: string;
@@ -110,6 +116,16 @@ export interface PainReport {
   intensity: number; // 1–10
   note?: string;
   createdAt: string;
+}
+
+export interface CycleLog {
+  id: string;
+  athleteId: string;
+  date: string; // ISO date
+  flow: CycleFlow;
+  symptoms: CycleSymptom[];
+  /** The athlete's own read on where they are in the cycle; not derived from `flow`. */
+  phase: CyclePhase | null;
 }
 
 export interface AthleteLoadSummary {

@@ -43,15 +43,23 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
 - **Fluxo do atleta**: aceitar convite (nome + modalidade(s) vêm do treinador; data de nascimento + sexo são
   informados pelo próprio atleta ao criar a senha) → onboarding → conectar Strava (simulado) ou registrar treino
   manualmente (sem relógio) → check-in de RPE (CR-10) + bem-estar (sono, dor muscular, humor, estresse, hidratação)
-  → progresso pessoal (ACWR, monotonia, strain, bem-estar composto, carga semanal, atividades recentes) → mapa de
-  dor (`/pain`) a qualquer momento, não só logo após um treino. A carga é sempre a combinação de duas partes — a
-  atividade (duração, distância, FC, de onde veio) e o check-in (RPE + bem-estar) — nunca uma automação que
-  dispensa o check-in.
+  → progresso pessoal (ACWR, monotonia, strain, bem-estar composto, carga semanal, atividades recentes, botão de
+  "sincronizar agora" simulado quando há wearable) → mapa de dor (`/pain`) a qualquer momento, não só logo após um
+  treino → registro de ciclo menstrual (`/cycle`, visível no progresso só para quem se declarou `FEMALE`, mas
+  acessível a qualquer atleta logado — sem bloqueio rígido sobre um dado de saúde autodeclarado). A carga é sempre
+  a combinação de duas partes — a atividade (duração, distância, FC, de onde veio) e o check-in (RPE + bem-estar)
+  — nunca uma automação que dispensa o check-in.
 - **Painel do treinador**: elenco com status de ACWR por atleta (só os `ACTIVE`; convites pendentes ficam em
-  `/dashboard/invite`), carga semanal, e faixas de risco (ideal / atenção / risco) agrupando o elenco inteiro;
-  cada atleta abre em `/dashboard/[athleteId]` com ACWR, monotonia, strain, carga semanal, atividades recentes,
-  bem-estar recente e mapa de dor recente — só se pertencer à equipe do treinador logado. `/dashboard/pain` reúne
-  os registros de dor de todo o elenco, mais recentes primeiro.
+  `/dashboard/invite`), carga semanal, faixas de risco (ideal / atenção / risco) e contagem de atletas sem
+  check-in há 3+ dias; cada atleta abre em `/dashboard/[athleteId]` com ACWR, monotonia, strain, carga semanal,
+  atividades recentes, bem-estar recente, mapa de dor recente e um selo de não-conformidade quando aplicável — só
+  se pertencer à equipe do treinador logado. `/dashboard/pain` reúne os registros de dor de todo o elenco, mais
+  recentes primeiro. Layout responsivo: barra lateral vira uma faixa horizontal rolável e a grade do elenco cai
+  para 1–2 colunas abaixo de `md`/`lg`.
+- **Exportação** (`/dashboard/[athleteId]`): "Exportar CSV" baixa o histórico de atividades/carga do atleta via
+  `GET /api/athletes/[athleteId]/export`; "Relatório (PDF)" abre `/dashboard/[athleteId]/print`, uma página
+  estilizada para impressão — vira PDF pelo próprio diálogo de impressão do navegador, sem precisar de uma
+  biblioteca de geração de PDF.
 - **Mapa de dor** (`src/components/BodyMap.tsx`): diagrama do corpo (frente) com 16 regiões clicáveis mais dois
   botões para "costas" (não visíveis de frente) — sem ilustração anatômica de verdade, só formas simples o
   bastante para cada região ser inequivocamente clicável. `POST /api/pain` pega o atleta pela sessão, não por um
@@ -62,8 +70,8 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
   detalhe do atleta no painel do treinador.
 - **API**: `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/invites` (criar
   convite), `POST /api/invites/[athleteId]/revoke`, `POST /api/invites/accept`, `POST /api/activities/manual`
-  (registro manual de treino), `POST /api/checkin` (RPE + bem-estar) e `POST /api/pain` (mapa de dor) — todos
-  validados.
+  (registro manual de treino), `POST /api/checkin` (RPE + bem-estar), `POST /api/pain` (mapa de dor),
+  `POST /api/cycle` (ciclo menstrual) e `GET /api/athletes/[athleteId]/export` (CSV) — todos validados.
 
 ## Contas de demonstração
 
@@ -82,7 +90,7 @@ vazio, separada da demo.
 ```bash
 npm install
 npm run dev       # http://localhost:3000
-npm test          # 54 testes (motor de métricas, camada de dados, senha, sessão)
+npm test          # 67 testes (motor de métricas, camada de dados, senha, sessão, apresentação)
 npm run lint
 ```
 
@@ -110,6 +118,4 @@ Lista completa e detalhada, com o que já está pronto e o que falta, em `docs/m
 - [ ] OAuth real do Strava (hoje o botão só simula a conexão)
 - [ ] Enviar o link de convite por e-mail de verdade, em vez de só mostrar na tela do treinador
 - [ ] RBAC mais rico (assistente técnico, fisio, fisiologista, admin de org — o enum `Role` já existe no schema)
-- [ ] Registro de ciclo menstrual (o mapa de dor já existe)
-- [ ] Exportação CSV/PDF
 - [ ] Cobrança (Stripe/Pix)

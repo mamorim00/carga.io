@@ -12,6 +12,7 @@ import {
   ageFromBirthDate,
   formatActivityDate,
   formatSports,
+  isNonCompliant,
   monotonyNote,
   timeAgo,
 } from "@/lib/presentation";
@@ -48,12 +49,19 @@ export default async function AthleteDetailPage({
   const maxLoad = Math.max(...summary.last7Days, 1);
   const days = ["S", "T", "Q", "Q", "S", "S", "D"];
   const age = ageFromBirthDate(athlete.birthDate);
+  const nonCompliant = isNonCompliant(summary.lastSyncedAt);
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-5 bg-paper px-6 pt-6 pb-10">
-      <Link href="/dashboard" className="text-[12.5px] text-muted">
-        ← Painel do time
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link href="/dashboard" className="text-[12.5px] text-muted">
+          ← Painel do time
+        </Link>
+        <div className="flex gap-3 text-[11.5px] font-semibold text-accent">
+          <a href={`/api/athletes/${athleteId}/export`}>Exportar CSV</a>
+          <Link href={`/dashboard/${athleteId}/print`}>Relatório (PDF)</Link>
+        </div>
+      </div>
 
       <div className="flex items-center justify-between">
         <div>
@@ -64,6 +72,14 @@ export default async function AthleteDetailPage({
             {athlete.sex !== "UNSPECIFIED" ? ` · ${SEX_LABEL[athlete.sex]}` : ""} ·{" "}
             {athlete.hasWearable ? timeAgo(summary.lastSyncedAt) : "sem wearable"}
           </div>
+          {nonCompliant && (
+            <div
+              className="mt-1.5 inline-block rounded-[3px] px-1.5 py-0.5 text-[10.5px] font-bold"
+              style={{ background: "var(--risk-soft)", color: "var(--risk)" }}
+            >
+              Sem check-in há 3+ dias
+            </div>
+          )}
         </div>
         <span className="h-2.5 w-2.5 flex-shrink-0 rounded-full" style={{ background: style.dot }} />
       </div>

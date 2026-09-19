@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { LogoutButton } from "@/components/LogoutButton";
+import { ResyncButton } from "@/components/ResyncButton";
 import { requireAthlete } from "@/lib/auth";
 import { getAthleteActivityFeed, getAthleteLoadSummary, getWellnessHistory } from "@/lib/data";
 import { wellnessComposite } from "@/lib/metrics";
@@ -106,6 +107,18 @@ export default async function ProgressPage() {
           <span className="text-muted">→</span>
         </Link>
       </div>
+
+      {athlete.sex === "FEMALE" && (
+        <Link
+          href="/cycle"
+          className="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3.5"
+        >
+          <span className="text-[13px] font-medium text-ink">Registrar ciclo</span>
+          <span className="text-muted">→</span>
+        </Link>
+      )}
+
+      {athlete.hasWearable && <ResyncButton />}
 
       <div>
         <div className="mb-2 flex items-center justify-between">

@@ -31,7 +31,10 @@ works end to end, not just "modeled in the schema."
 - [x] Handle activities with no HR/power data gracefully — `combinedLoad()` in `src/lib/metrics.ts`
       already falls back to internal-load-only when `external` is undefined; the manual-entry path
       exercises this today.
-- [ ] Re-sync / manual "pull now" button for athlete
+- [x] Re-sync / manual "pull now" button for athlete — `src/components/ResyncButton.tsx` on
+      `/progress` (shown when `hasWearable`). Client-only, no backend call: labeled as simulated,
+      same as the "Conectar com Strava" button — there's nothing real to trigger yet, and faking a
+      successful sync would create data that isn't backed by anything real.
 
 ## Athlete app (web, mobile-responsive)
 
@@ -43,8 +46,12 @@ works end to end, not just "modeled in the schema."
 - [x] Pain map: body diagram, tap-to-mark location, intensity, note — `src/components/BodyMap.tsx`
       (16 front-view hotspots + 2 "not visible from front" chips for upper/lower back), `/pain`
       (athlete self-reports anytime, not tied to a check-in), backed by `addPainReport`.
-- [ ] Menstrual cycle log: flow, symptoms, cycle phase. Modeled in `prisma/schema.prisma`
-      (`CycleLog`) but not implemented in the in-memory layer or the app at all.
+- [x] Menstrual cycle log: flow, symptoms, cycle phase — `/cycle`, backed by `addCycleLog`/
+      `getAthleteCycleLogs`. Linked from `/progress` only when `athlete.sex === "FEMALE"`; not
+      hard-blocked for anyone else who navigates there directly (sex is self-reported and often
+      `UNSPECIFIED`, and gating personal health data entry felt more paternalistic than helpful).
+      No coach-facing view of this anywhere — unlike pain reports, this is data an athlete tracks
+      only for themselves.
 - [x] Personal trends view: athlete's own load history and wellness over time — `/progress`
       (ACWR, monotony, strain, wellness composite, weekly load chart, recent activities) plus
       `/dashboard/[athleteId]` for the coach's view of the same athlete.
@@ -74,11 +81,15 @@ works end to end, not just "modeled in the schema."
 - [x] Per-athlete detail page: daily/weekly load, monotony, strain — `/dashboard/[athleteId]`.
       Numbers, not charts, for monotony/strain (matches the weekly-load bar chart's own simplicity).
 - [x] Pain map review across roster — `/dashboard/pain`, via `getPainReportsForCoach`.
-- [ ] Non-compliance flag: athlete hasn't synced/logged RPE in N days. **Partial** — every roster
-      card and the athlete detail page show "last synced" / time-ago text, but nothing turns that
-      into an alert or a threshold-based flag; `AlertRule` exists in `prisma/schema.prisma` and is
-      entirely unused by the app.
-- [ ] CSV/PDF export of an athlete's load history
+- [x] Non-compliance flag: athlete hasn't synced/logged RPE in N days — `isNonCompliant()`
+      (threshold: 3 days, this app's own choice, no literature citation for it), a stat tile on
+      `/dashboard`, a badge on the roster card and the athlete detail page. `AlertRule` in
+      `prisma/schema.prisma` is still unused by the app — this flag is computed on read, not
+      backed by a stored rule (no coach-configurable thresholds yet; that's Phase 2's
+      "configurable alerts").
+- [x] CSV/PDF export of an athlete's load history — `GET /api/athletes/[athleteId]/export` for a
+      real CSV download; `/dashboard/[athleteId]/print` for PDF, via the browser's own print
+      dialog against a print-styled report page rather than a new PDF-generation dependency.
 
 ## Billing
 
@@ -94,11 +105,10 @@ works end to end, not just "modeled in the schema."
 
 - [x] PT-BR as default locale, copy written for Brazilian coaches/physios — the whole app is
       PT-BR today, copy included (see `README.md` for the reasoning behind specific phrasing).
-- [ ] Responsive layout. **Partial** — the athlete-facing pages (`/login`, `/onboarding`,
-      `/checkin`, `/progress`) are built mobile-first (`max-w-md`) and work on a phone; the coach
-      dashboard (`/dashboard`, `/dashboard/[athleteId]`, `/dashboard/invite`) is desktop-oriented
-      (fixed sidebar, multi-column grid) and hasn't been checked or adapted for tablet/narrow
-      screens.
+- [x] Responsive layout — `/dashboard`'s sidebar stacks to a horizontal scrollable bar and the
+      roster grid/side panel collapse to one column below `md`/`lg`; the athlete-facing pages were
+      already mobile-first. Verified via the actual rendered class names over curl (no headless
+      browser in this sandbox to screenshot different viewports), not just written and assumed.
 - [ ] Data model migrations for Athlete, Coach, Org/Team, Activity, SessionReport,
       WellnessCheckin, PainReport, CycleLog, AlertRule. **Partial** — `prisma/schema.prisma` models
       all of these (CycleLog and AlertRule included, even though the app doesn't use them yet);
@@ -123,21 +133,9 @@ works end to end, not just "modeled in the schema."
 Everything below is what's still `[ ]` above, grouped by whether I can build it right now or need
 something from you first.
 
-### Buildable now — no accounts, keys, or decisions needed from you
-
-1. **Menstrual cycle log** — data layer (mirroring `CycleLog` in the schema) + a simple log form.
-2. **Non-compliance flag** — pick a threshold (e.g., no sync/RPE in 3 days), badge it on the roster
-   and athlete detail page.
-3. **CSV/PDF export** of an athlete's load history.
-4. **Responsive pass on the coach dashboard** — collapse the sidebar, stack the grid, on narrow
-   viewports.
-5. **Manual "pull now" resync button** — build the UI/action now against the existing (simulated)
-   sync state; it'll call the real Strava pull once that exists, same as everywhere else in this
-   app that's honest about being a stand-in today.
-
 ### In progress
 
-6. **Real Postgres + Prisma migration** — connection string is in hand (Prisma Postgres, via
+1. **Real Postgres + Prisma migration** — connection string is in hand (Prisma Postgres, via
    Vercel's integration) and sitting in a local, gitignored `.env`. Not yet done: running the
    first `prisma db push`/`migrate dev` against it, then swapping `src/lib/data.ts`'s in-memory
    arrays for the real Prisma client (same function signatures, so nothing above it changes) and
@@ -147,15 +145,21 @@ something from you first.
 
 ### Needs something from you before I can build it for real
 
-7. **Strava OAuth integration** — register an app at
+2. **Strava OAuth integration** — register an app at
    [developers.strava.com](https://developers.strava.com) and give me the client id/secret (as
    environment variables, never pasted in chat); then I can build consent, token storage +
    refresh, activity sync (webhook or polling), and field mapping.
-8. **Push notifications** — decide web push (needs VAPID keys, works in-browser) vs. a native
+3. **Push notifications** — decide web push (needs VAPID keys, works in-browser) vs. a native
    app (bigger project) before "post-activity push prompt" can be built.
-9. **Billing** — a Pix-capable provider account (Mercado Pago/PagSeguro/Efí, or Stripe if its Pix
+4. **Billing** — a Pix-capable provider account (Mercado Pago/PagSeguro/Efí, or Stripe if its Pix
    support covers Brazil for your case) and a Stripe account for cards; then subscription tiers
    and management.
+
+### Everything else buildable now is done
+
+The only "buildable now, no accounts needed" items left are ones tied to a bigger effort above
+(e.g., real subscription tiers depend on billing being wired up first) or genuinely Phase 2+ per
+the spec's own scope line (multi-coach roles, configurable alert thresholds, messaging).
 
 Pick any numbered item and tell me to go — I'll work it the same way as everything so far: build
 it, verify it (tests + a real click-through, not just a green build), and push.

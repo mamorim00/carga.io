@@ -15,6 +15,7 @@ import type {
   Athlete,
   BodyPart,
   Coach,
+  CycleLog,
   Org,
   PainReport,
   Sex,
@@ -59,6 +60,7 @@ interface Store {
   sessionReports: SessionReport[];
   wellnessCheckins: WellnessCheckin[];
   painReports: PainReport[];
+  cycleLogs: CycleLog[];
   loadsByAthlete: Map<string, number[]>;
 }
 
@@ -73,6 +75,7 @@ const store: Store = (globalForCarga.__cargaStore ??= {
   sessionReports: [],
   wellnessCheckins: [],
   painReports: [],
+  cycleLogs: [],
   loadsByAthlete: new Map(),
 });
 
@@ -93,6 +96,7 @@ const activities = store.activities;
 const sessionReports = store.sessionReports;
 const wellnessCheckins = store.wellnessCheckins;
 const painReports = store.painReports;
+const cycleLogs = store.cycleLogs;
 
 function isoDaysAgo(days: number): string {
   const d = new Date();
@@ -521,6 +525,41 @@ export function getAthleteActivityFeed(athleteId: string, limit = 10): ActivityF
     }));
 }
 
+export interface ExportRow {
+  date: string;
+  source: Activity["source"];
+  durationMin: number;
+  distanceKm: number | null;
+  avgHr: number | null;
+  rpe: number | null;
+  internalLoad: number | null;
+  externalLoad: number | null;
+  combinedLoad: number | null;
+}
+
+/** An athlete's full activity + load history, oldest first — the CSV/PDF export's source data. */
+export function getAthleteExportRows(athleteId: string): ExportRow[] {
+  return getAthleteActivities(athleteId)
+    .slice()
+    .sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+    .map((activity) => {
+      const rpe = sessionReports.find((r) => r.activityId === activity.id)?.rpe ?? null;
+      const external = activity.hrZones ? externalLoadFromHrZones(activity.hrZones) : null;
+      const internal = rpe != null ? internalLoad(rpe, activity.durationMin) : null;
+      return {
+        date: activity.startedAt,
+        source: activity.source,
+        durationMin: activity.durationMin,
+        distanceKm: activity.distanceKm ?? null,
+        avgHr: activity.avgHr ?? null,
+        rpe,
+        internalLoad: internal,
+        externalLoad: external,
+        combinedLoad: internal != null ? combinedLoad(internal, external ?? undefined) : null,
+      };
+    });
+}
+
 export function getAthleteLoadSummary(athleteId: string): AthleteLoadSummary {
   const athlete = getAthlete(athleteId);
   if (!athlete) throw new Error(`unknown athlete ${athleteId}`);
@@ -664,4 +703,34 @@ export function getPainReportsForCoach(coachId: string, limit = 20): RosterPainR
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, limit)
     .map((p) => ({ ...p, athleteName: getAthlete(p.athleteId)?.name ?? "—" }));
+}
+
+// Cycle logs are personal health data an athlete tracks for themselves —
+// unlike pain reports, there's deliberately no coach-facing rollup of these.
+
+export function addCycleLog(input: {
+  athleteId: string;
+  date?: string;
+  flow: CycleLog["flow"];
+  symptoms: CycleLog["symptoms"];
+  phase: CycleLog["phase"];
+}): CycleLog {
+  const log: CycleLog = {
+    id: id("cl"),
+    athleteId: input.athleteId,
+    date: input.date ?? new Date().toISOString(),
+    flow: input.flow,
+    symptoms: input.symptoms,
+    phase: input.phase,
+  };
+  cycleLogs.push(log);
+  return log;
+}
+
+/** An athlete's own cycle logs, most recent first. */
+export function getAthleteCycleLogs(athleteId: string, limit = 10): CycleLog[] {
+  return cycleLogs
+    .filter((c) => c.athleteId === athleteId)
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, limit);
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptAthleteInvite,
+  addCycleLog,
   addManualActivity,
   addPainReport,
   createAthleteInvite,
@@ -10,6 +11,8 @@ import {
   getAthlete,
   getAthleteActivityFeed,
   getAthleteByInviteToken,
+  getAthleteCycleLogs,
+  getAthleteExportRows,
   getAthleteLoadSummary,
   getAthletePainReports,
   getLatestUnreportedActivity,
@@ -309,5 +312,49 @@ describe("pain reports", () => {
       passwordHash: "scrypt:whatever:hash",
     });
     expect(getPainReportsForCoach(other.id, 50)).toHaveLength(0);
+  });
+});
+
+describe("cycle logs", () => {
+  it("lets an athlete log a cycle entry and read it back", () => {
+    const marina = findAthleteByEmail("marina.alves@atleta.com")!;
+    const log = addCycleLog({
+      athleteId: marina.id,
+      flow: "MEDIUM",
+      symptoms: ["CRAMPS", "FATIGUE"],
+      phase: "MENSTRUAL",
+    });
+    expect(log.flow).toBe("MEDIUM");
+
+    const logs = getAthleteCycleLogs(marina.id, 5);
+    expect(logs[0].id).toBe(log.id);
+    expect(logs[0].symptoms).toEqual(["CRAMPS", "FATIGUE"]);
+  });
+
+  it("allows an empty symptom list and no phase", () => {
+    const camila = findAthleteByEmail("camila.souza@atleta.com")!;
+    const log = addCycleLog({ athleteId: camila.id, flow: "NONE", symptoms: [], phase: null });
+    expect(log.phase).toBeNull();
+    expect(log.symptoms).toEqual([]);
+  });
+});
+
+describe("getAthleteExportRows", () => {
+  it("returns the full activity history oldest-first, with load computed per row", () => {
+    const marina = findAthleteByEmail("marina.alves@atleta.com")!;
+    const rows = getAthleteExportRows(marina.id);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r, i) => i === 0 || r.date >= rows[i - 1].date)).toBe(true);
+    const reported = rows.find((r) => r.rpe !== null);
+    expect(reported?.internalLoad).not.toBeNull();
+    expect(reported?.combinedLoad).not.toBeNull();
+  });
+
+  it("leaves load null for an activity with no session report yet", () => {
+    const thiago = findAthleteByEmail("thiago.nunes@atleta.com")!;
+    addManualActivity({ athleteId: thiago.id, durationMin: 20 });
+    const rows = getAthleteExportRows(thiago.id);
+    const unreported = rows.find((r) => r.rpe === null);
+    expect(unreported?.internalLoad).toBeNull();
   });
 });
