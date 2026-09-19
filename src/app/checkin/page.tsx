@@ -1,4 +1,5 @@
-import { getAthlete, getDemoAthleteId, getLatestUnreportedActivity } from "@/lib/data";
+import { requireAthlete } from "@/lib/auth";
+import { getLatestUnreportedActivity } from "@/lib/data";
 import { CheckinForm } from "./CheckinForm";
 
 export default async function CheckinPage({
@@ -7,9 +8,8 @@ export default async function CheckinPage({
   searchParams: Promise<{ manual?: string }>;
 }) {
   const { manual } = await searchParams;
-  const athleteId = getDemoAthleteId();
-  const athlete = getAthlete(athleteId)!;
-  const pendingActivity = getLatestUnreportedActivity(athleteId) ?? null;
+  const athlete = await requireAthlete();
+  const pendingActivity = (await getLatestUnreportedActivity(athlete.id)) ?? null;
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col bg-paper">

@@ -1,11 +1,11 @@
 // Carga — data model (Phase 1 MVP)
-// NOTE: This schema is the source of truth for the production data model.
-// `prisma generate` needs outbound access to binaries.prisma.sh to fetch the
-// query engine, which this sandbox's egress policy blocks — so the app
-// currently runs against an in-memory data layer (see src/lib/data.ts) that
-// mirrors these shapes. Point DATABASE_URL at a real Postgres instance and
-// run `npx prisma generate && npx prisma migrate dev` in an environment with
-// normal network access to switch over.
+// NOTE: This schema is the real, live data model — src/lib/data.ts queries
+// it directly via @prisma/client. There is no in-memory fallback anymore.
+// No migration has ever been generated (`prisma migrate dev` needs a live
+// connection this sandbox can't make — raw TCP to Postgres is blocked by
+// its egress policy); instead `npm run build` runs `prisma db push` against
+// PRISMA_DATABASE_URL, which Vercel's build environment (real network
+// access) can reach. See README.md for how this was verified.
 
 generator client {
   provider = "prisma-client-js"
@@ -13,7 +13,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("PRISMA_DATABASE_URL")
 }
 
 enum Role {
@@ -45,16 +45,58 @@ enum AcwrZone {
   RISK
 }
 
+// ACTIVE once the athlete has followed their invite link and set a
+// password; INVITED from the moment a coach sends the invite until then.
+enum AthleteStatus {
+  INVITED
+  ACTIVE
+}
+
+// Self-reported at invite acceptance; used for RPE/ACWR norms and cycle-log
+// eligibility, never inferred.
+enum Sex {
+  FEMALE
+  MALE
+  UNSPECIFIED
+}
+
+// Body regions selectable on the pain map (front-view hotspots, plus two
+// "not visible from the front" chips for the back).
+enum BodyPart {
+  HEAD
+  NECK
+  SHOULDER_L
+  SHOULDER_R
+  CHEST
+  ABDOMEN
+  ARM_L
+  ARM_R
+  HIP_L
+  HIP_R
+  THIGH_L
+  THIGH_R
+  KNEE_L
+  KNEE_R
+  LOWER_LEG_L
+  LOWER_LEG_R
+  UPPER_BACK
+  LOWER_BACK
+}
+
 model Org {
   id        String   @id @default(cuid())
   name      String
   createdAt DateTime @default(now())
 
+  coaches  Coach[]
   members  Membership[]
   athletes Athlete[]
   alerts   AlertRule[]
 }
 
+// Kept for the richer future RBAC in the Role enum (assistant coaches,
+// physios, org admins on the same org) — not used by the credentials login
+// below, which is 1 Coach account : 1 Org, created at signup.
 model Membership {
   id     String @id @default(cuid())
   userId String
@@ -66,27 +108,47 @@ model Membership {
   @@unique([userId, orgId])
 }
 
+// Coach signup creates both the Org and the Coach account together
+// (orgName + name + email + password) — there's no separate User/identity
+// table; passwordHash lives directly on Coach.
 model Coach {
-  id     String @id @default(cuid())
-  userId String @unique
-  name   String
-  email  String @unique
+  id           String @id @default(cuid())
+  orgId        String
+  name         String
+  email        String @unique
+  passwordHash String
 
+  org      Org       @relation(fields: [orgId], references: [id])
   athletes Athlete[]
 }
 
 model Athlete {
-  id        String   @id @default(cuid())
-  userId    String   @unique
+  id        String        @id @default(cuid())
   orgId     String
-  coachId   String?
+  coachId   String
   name      String
-  email     String   @unique
-  sport     Sport
-  createdAt DateTime @default(now())
+  email     String        @unique
+  sports    Sport[]
+  status    AthleteStatus @default(INVITED)
+  createdAt DateTime      @default(now())
 
-  org   Org    @relation(fields: [orgId], references: [id])
-  coach Coach? @relation(fields: [coachId], references: [id])
+  // Self-reported at invite acceptance; null/UNSPECIFIED while INVITED.
+  birthDate DateTime?
+  sex       Sex       @default(UNSPECIFIED)
+
+  // true once the athlete has connected a wearable (Strava, at launch).
+  // No real Strava OAuth exists yet (see docs/mvp-tasks.md) — this only
+  // ever gets set by seed data today, but the field is real so the athlete
+  // app and coach dashboard have something to read once OAuth lands.
+  hasWearable Boolean @default(false)
+
+  // Set once the invite is accepted; null while status is INVITED.
+  passwordHash    String?
+  inviteToken     String?   @unique
+  inviteExpiresAt DateTime?
+
+  org   Org   @relation(fields: [orgId], references: [id])
+  coach Coach @relation(fields: [coachId], references: [id])
 
   activities       Activity[]
   sessionReports   SessionReport[]
@@ -134,7 +196,7 @@ model WellnessCheckin {
   soreness  Int // 1–5
   mood      Int // 1–5
   stress    Int // 1–5
-  hydration Int? // 1–5
+  hydration Int // 1–5
 
   athlete Athlete @relation(fields: [athleteId], references: [id])
 
@@ -144,7 +206,7 @@ model WellnessCheckin {
 model PainReport {
   id        String   @id @default(cuid())
   athleteId String
-  bodyPart  String
+  bodyPart  BodyPart
   intensity Int // 1–10
   note      String?
   createdAt DateTime @default(now())

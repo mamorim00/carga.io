@@ -103,6 +103,25 @@ function ewma(loads: number[], windowDays: number): number {
   return value;
 }
 
+export interface WellnessInputs {
+  sleep: number; // 1–5, higher is better
+  soreness: number; // 1–5, higher is worse
+  mood: number; // 1–5, higher is better
+  stress: number; // 1–5, higher is worse
+  hydration: number; // 1–5, higher is better
+}
+
+/**
+ * Single 1–5 wellness score from a check-in's five sub-scores. Soreness and
+ * stress are inverted (6 − value) first so "5" always means "good" across
+ * every input before averaging — otherwise a high-soreness, high-stress day
+ * would drag the raw average up, not down.
+ */
+export function wellnessComposite(w: WellnessInputs): number {
+  const good = [w.sleep, 6 - w.soreness, w.mood, 6 - w.stress, w.hydration];
+  return average(good);
+}
+
 /** Classify an ACWR value into the traffic-light zone shown on the dashboard. */
 export function classifyAcwr(acwr: number): AcwrZone {
   if (acwr >= 0.8 && acwr <= 1.3) return "IDEAL";

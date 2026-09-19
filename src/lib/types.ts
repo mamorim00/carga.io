@@ -6,6 +6,43 @@
 export type Sport = "RUNNING" | "CYCLING" | "TRIATHLON" | "OTHER";
 export type ActivitySource = "STRAVA" | "GARMIN" | "APPLE_HEALTH" | "MANUAL";
 export type AcwrZone = "IDEAL" | "ATTENTION" | "RISK";
+/** ACTIVE once the athlete follows their invite link and sets a password. */
+export type AthleteStatus = "INVITED" | "ACTIVE";
+/** Self-reported at invite acceptance; used for RPE/ACWR norms and cycle-log eligibility. */
+export type Sex = "FEMALE" | "MALE" | "UNSPECIFIED";
+
+/**
+ * Body regions selectable on the pain map (`src/components/BodyMap.tsx`).
+ * Most are tappable hotspots on the front-view silhouette; the two "costas"
+ * entries aren't visible from the front and are offered as separate chips.
+ */
+export const BODY_PARTS = [
+  "HEAD",
+  "NECK",
+  "SHOULDER_L",
+  "SHOULDER_R",
+  "CHEST",
+  "ABDOMEN",
+  "ARM_L",
+  "ARM_R",
+  "HIP_L",
+  "HIP_R",
+  "THIGH_L",
+  "THIGH_R",
+  "KNEE_L",
+  "KNEE_R",
+  "LOWER_LEG_L",
+  "LOWER_LEG_R",
+  "UPPER_BACK",
+  "LOWER_BACK",
+] as const;
+export type BodyPart = (typeof BODY_PARTS)[number];
+
+export type CycleFlow = "NONE" | "LIGHT" | "MEDIUM" | "HEAVY";
+export type CyclePhase = "MENSTRUAL" | "FOLLICULAR" | "OVULATION" | "LUTEAL";
+
+export const CYCLE_SYMPTOMS = ["CRAMPS", "FATIGUE", "HEADACHE", "BLOATING", "MOOD_SWINGS"] as const;
+export type CycleSymptom = (typeof CYCLE_SYMPTOMS)[number];
 
 export interface Org {
   id: string;
@@ -14,8 +51,10 @@ export interface Org {
 
 export interface Coach {
   id: string;
+  orgId: string;
   name: string;
   email: string;
+  passwordHash: string;
 }
 
 export interface Athlete {
@@ -24,9 +63,19 @@ export interface Athlete {
   coachId: string;
   name: string;
   email: string;
-  sport: Sport;
+  /** At least one; the coach picks these when creating the invite. */
+  sports: Sport[];
+  /** ISO date; null until the athlete sets it at invite acceptance. */
+  birthDate: string | null;
+  sex: Sex;
   /** true once the athlete has connected a wearable (Strava, at launch). */
   hasWearable: boolean;
+  status: AthleteStatus;
+  /** Set once the invite is accepted; null while status is INVITED. */
+  passwordHash: string | null;
+  /** Opaque, single-use; null once accepted or if never invited this way. */
+  inviteToken: string | null;
+  inviteExpiresAt: string | null;
 }
 
 export interface Activity {
@@ -57,25 +106,39 @@ export interface WellnessCheckin {
   soreness: number; // 1–5
   mood: number; // 1–5
   stress: number; // 1–5
+  hydration: number; // 1–5
 }
 
 export interface PainReport {
   id: string;
   athleteId: string;
-  bodyPart: string;
+  bodyPart: BodyPart;
   intensity: number; // 1–10
   note?: string;
   createdAt: string;
 }
 
+export interface CycleLog {
+  id: string;
+  athleteId: string;
+  date: string; // ISO date
+  flow: CycleFlow;
+  symptoms: CycleSymptom[];
+  /** The athlete's own read on where they are in the cycle; not derived from `flow`. */
+  phase: CyclePhase | null;
+}
+
 export interface AthleteLoadSummary {
   athleteId: string;
   name: string;
-  sport: Sport;
+  sports: Sport[];
   acwr: number | null;
   zone: AcwrZone | null;
   weeklyLoad: number;
   last7Days: number[]; // combined load per day, oldest first
+  /** Foster monotony/strain over the same last7Days window; null until 7 days of history exist. */
+  monotony: number | null;
+  strain: number | null;
   lastSyncedAt: string | null;
   hasWearable: boolean;
 }

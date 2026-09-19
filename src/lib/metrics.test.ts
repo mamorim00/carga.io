@@ -7,6 +7,7 @@ import {
   internalLoad,
   monotony,
   strain,
+  wellnessComposite,
 } from "./metrics";
 
 describe("internalLoad", () => {
@@ -113,5 +114,21 @@ describe("classifyAcwr", () => {
   it("classifies risk above 1.5", () => {
     expect(classifyAcwr(1.58)).toBe("RISK");
     expect(classifyAcwr(1.61)).toBe("RISK");
+  });
+});
+
+describe("wellnessComposite", () => {
+  it("scores a perfect check-in at 5", () => {
+    expect(wellnessComposite({ sleep: 5, soreness: 1, mood: 5, stress: 1, hydration: 5 })).toBe(5);
+  });
+
+  it("scores the worst possible check-in at 1", () => {
+    expect(wellnessComposite({ sleep: 1, soreness: 5, mood: 1, stress: 5, hydration: 1 })).toBe(1);
+  });
+
+  it("inverts soreness and stress so high values pull the score down, not up", () => {
+    const good = wellnessComposite({ sleep: 3, soreness: 1, mood: 3, stress: 1, hydration: 3 });
+    const bad = wellnessComposite({ sleep: 3, soreness: 5, mood: 3, stress: 5, hydration: 3 });
+    expect(good).toBeGreaterThan(bad);
   });
 });
