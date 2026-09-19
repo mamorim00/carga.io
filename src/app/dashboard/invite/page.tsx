@@ -10,7 +10,8 @@ export default async function InvitePage() {
   const proto = hdrs.get("x-forwarded-proto") ?? (process.env.NODE_ENV === "production" ? "https" : "http");
   const origin = `${proto}://${hdrs.get("host")}`;
 
-  const pending = getPendingInvites(coach.id).map((a) => ({
+  const invites = await getPendingInvites(coach.id);
+  const pending = invites.map((a) => ({
     athleteId: a.id,
     name: a.name,
     email: a.email,

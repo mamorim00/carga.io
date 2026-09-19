@@ -15,7 +15,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = submitCheckin({ athleteId, activityId, rpe, sleep, soreness, mood, stress, hydration });
+    const result = await submitCheckin({ athleteId, activityId, rpe, sleep, soreness, mood, stress, hydration });
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 404 });

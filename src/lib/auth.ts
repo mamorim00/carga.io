@@ -45,7 +45,7 @@ export async function getSession(): Promise<SessionPayload | null> {
 export async function requireCoach(): Promise<Coach> {
   const session = await getSession();
   if (!session || session.role !== "COACH") redirect("/login");
-  const coach = getCoach(session.sub);
+  const coach = await getCoach(session.sub);
   if (!coach) redirect("/login");
   return coach;
 }
@@ -54,7 +54,7 @@ export async function requireCoach(): Promise<Coach> {
 export async function requireAthlete(): Promise<Athlete> {
   const session = await getSession();
   if (!session || session.role !== "ATHLETE") redirect("/login");
-  const athlete = getAthlete(session.sub);
+  const athlete = await getAthlete(session.sub);
   if (!athlete || athlete.status !== "ACTIVE") redirect("/login");
   return athlete;
 }
@@ -65,12 +65,12 @@ export async function requireAthlete(): Promise<Athlete> {
 export async function getSessionCoach(): Promise<Coach | null> {
   const session = await getSession();
   if (!session || session.role !== "COACH") return null;
-  return getCoach(session.sub) ?? null;
+  return (await getCoach(session.sub)) ?? null;
 }
 
 export async function getSessionAthlete(): Promise<Athlete | null> {
   const session = await getSession();
   if (!session || session.role !== "ATHLETE") return null;
-  const athlete = getAthlete(session.sub);
+  const athlete = await getAthlete(session.sub);
   return athlete && athlete.status === "ACTIVE" ? athlete : null;
 }

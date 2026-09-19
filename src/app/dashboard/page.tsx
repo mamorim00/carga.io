@@ -7,8 +7,8 @@ import type { AcwrZone } from "@/lib/types";
 
 export default async function DashboardPage() {
   const coach = await requireCoach();
-  const org = getOrg(coach.orgId)!;
-  const roster = getRoster(coach.id);
+  const [org, roster] = await Promise.all([getOrg(coach.orgId), getRoster(coach.id)]);
+  if (!org) throw new Error(`unknown org ${coach.orgId}`);
 
   const riskCount = roster.filter((a) => a.zone === "RISK").length;
   const syncingCount = roster.filter((a) => a.hasWearable).length;

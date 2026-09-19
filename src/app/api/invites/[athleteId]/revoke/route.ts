@@ -7,7 +7,7 @@ export async function POST(_request: Request, { params }: { params: Promise<{ at
   if (!coach) return NextResponse.json({ error: "não autenticado" }, { status: 401 });
 
   const { athleteId } = await params;
-  const revoked = revokeInvite(athleteId, coach.id);
+  const revoked = await revokeInvite(athleteId, coach.id);
   if (!revoked) return NextResponse.json({ error: "convite não encontrado" }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

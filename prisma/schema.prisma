@@ -1,11 +1,11 @@
 // Carga — data model (Phase 1 MVP)
-// NOTE: This schema is the source of truth for the production data model.
-// `prisma generate` needs outbound access to binaries.prisma.sh to fetch the
-// query engine, which this sandbox's egress policy blocks — so the app
-// currently runs against an in-memory data layer (see src/lib/data.ts) that
-// mirrors these shapes. Point DATABASE_URL at a real Postgres instance and
-// run `npx prisma generate && npx prisma migrate dev` in an environment with
-// normal network access to switch over.
+// NOTE: This schema is the real, live data model — src/lib/data.ts queries
+// it directly via @prisma/client. There is no in-memory fallback anymore.
+// No migration has ever been generated (`prisma migrate dev` needs a live
+// connection this sandbox can't make — raw TCP to Postgres is blocked by
+// its egress policy); instead `npm run build` runs `prisma db push` against
+// PRISMA_DATABASE_URL, which Vercel's build environment (real network
+// access) can reach. See README.md for how this was verified.
 
 generator client {
   provider = "prisma-client-js"
@@ -13,7 +13,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("PRISMA_DATABASE_URL")
 }
 
 enum Role {
@@ -135,6 +135,12 @@ model Athlete {
   // Self-reported at invite acceptance; null/UNSPECIFIED while INVITED.
   birthDate DateTime?
   sex       Sex       @default(UNSPECIFIED)
+
+  // true once the athlete has connected a wearable (Strava, at launch).
+  // No real Strava OAuth exists yet (see docs/mvp-tasks.md) — this only
+  // ever gets set by seed data today, but the field is real so the athlete
+  // app and coach dashboard have something to read once OAuth lands.
+  hasWearable Boolean @default(false)
 
   // Set once the invite is accepted; null while status is INVITED.
   passwordHash    String?

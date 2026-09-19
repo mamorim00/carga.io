@@ -28,12 +28,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ ath
   if (!coach) return NextResponse.json({ error: "não autenticado" }, { status: 401 });
 
   const { athleteId } = await params;
-  const athlete = getAthlete(athleteId);
+  const athlete = await getAthlete(athleteId);
   if (!athlete || athlete.coachId !== coach.id) {
     return NextResponse.json({ error: "atleta não encontrado" }, { status: 404 });
   }
 
-  const rows = getAthleteExportRows(athleteId);
+  const rows = await getAthleteExportRows(athleteId);
   const lines = [
     HEADER.join(","),
     ...rows.map((r) =>

@@ -23,6 +23,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Intensidade deve ser de 1 a 10." }, { status: 400 });
   }
 
-  const report = addPainReport({ athleteId: athlete.id, bodyPart: bodyPart as BodyPart, intensity, note });
+  const report = await addPainReport({ athleteId: athlete.id, bodyPart: bodyPart as BodyPart, intensity, note });
   return NextResponse.json({ report }, { status: 201 });
 }

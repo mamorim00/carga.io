@@ -109,12 +109,14 @@ works end to end, not just "modeled in the schema."
       roster grid/side panel collapse to one column below `md`/`lg`; the athlete-facing pages were
       already mobile-first. Verified via the actual rendered class names over curl (no headless
       browser in this sandbox to screenshot different viewports), not just written and assumed.
-- [ ] Data model migrations for Athlete, Coach, Org/Team, Activity, SessionReport,
-      WellnessCheckin, PainReport, CycleLog, AlertRule. **Partial** — `prisma/schema.prisma` models
-      all of these (CycleLog and AlertRule included, even though the app doesn't use them yet);
-      no migration has ever run because there's no Postgres instance — **needs a `DATABASE_URL`
-      from you** to run `npx prisma migrate dev` for the first time. Until then, `src/lib/data.ts`
-      is the real (in-memory) implementation the app runs on.
+- [x] Data model migrations for Athlete, Coach, Org/Team, Activity, SessionReport,
+      WellnessCheckin, PainReport, CycleLog, AlertRule. `prisma/schema.prisma` models all of these
+      (`AlertRule` still unused by the app, `LoadSnapshot` too — both kept for later); applied via
+      `prisma db push` (not `prisma migrate dev` — no migration history exists, since generating
+      the first one needs a live connection this sandbox can't make) as part of `npm run build`,
+      which is what Vercel actually runs. `src/lib/data.ts` is a thin `@prisma/client` layer now,
+      not an in-memory implementation — see README.md for how this was built and verified (or
+      rather, how it *couldn't* be verified locally, and why that's an accepted tradeoff here).
 - [ ] Basic error/observability logging for the Strava sync pipeline — nothing to log yet; there's
       no sync pipeline until Strava OAuth exists.
 
@@ -133,15 +135,15 @@ works end to end, not just "modeled in the schema."
 Everything below is what's still `[ ]` above, grouped by whether I can build it right now or need
 something from you first.
 
-### In progress
+### Done
 
-1. **Real Postgres + Prisma migration** — connection string is in hand (Prisma Postgres, via
-   Vercel's integration) and sitting in a local, gitignored `.env`. Not yet done: running the
-   first `prisma db push`/`migrate dev` against it, then swapping `src/lib/data.ts`'s in-memory
-   arrays for the real Prisma client (same function signatures, so nothing above it changes) and
-   converting every caller to `await` it. This is the one item that removes a whole class of
-   "in-memory, resets on restart, and even forks per Next.js compilation layer within one
-   process" caveats from the README at once.
+1. **Real Postgres + Prisma migration** — `src/lib/data.ts` is now a real `@prisma/client` layer
+   (no more in-memory arrays), seeded idempotently per-database rather than per-process, with
+   ACWR/monotony/strain recomputed from raw activity/check-in rows on every read instead of a
+   stored running total. `npm run build` runs `prisma db push` before `next build`. **Caveat**:
+   built and typechecked without ever reaching the real database — this sandbox can't make a raw
+   TCP connection to Postgres, only HTTPS. Verified only via the live Vercel deploy, not locally.
+   See README.md for the full story.
 
 ### Needs something from you before I can build it for real
 

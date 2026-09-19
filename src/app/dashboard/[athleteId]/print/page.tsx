@@ -15,11 +15,10 @@ export default async function AthletePrintReportPage({
 }) {
   const coach = await requireCoach();
   const { athleteId } = await params;
-  const athlete = getAthlete(athleteId);
+  const athlete = await getAthlete(athleteId);
   if (!athlete || athlete.coachId !== coach.id) notFound();
 
-  const summary = getAthleteLoadSummary(athleteId);
-  const rows = getAthleteExportRows(athleteId);
+  const [summary, rows] = await Promise.all([getAthleteLoadSummary(athleteId), getAthleteExportRows(athleteId)]);
 
   return (
     <main className="mx-auto max-w-3xl bg-paper px-8 py-8 text-ink print:px-0 print:py-0">

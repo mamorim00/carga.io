@@ -6,7 +6,7 @@ import { PainForm } from "./PainForm";
 
 export default async function PainPage() {
   const athlete = await requireAthlete();
-  const reports = getAthletePainReports(athlete.id, 5);
+  const reports = await getAthletePainReports(athlete.id, 5);
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col bg-paper">

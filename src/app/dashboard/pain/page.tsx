@@ -5,7 +5,7 @@ import { BODY_PART_LABEL, formatActivityDate } from "@/lib/presentation";
 
 export default async function PainReviewPage() {
   const coach = await requireCoach();
-  const reports = getPainReportsForCoach(coach.id, 30);
+  const reports = await getPainReportsForCoach(coach.id, 30);
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-2xl flex-col gap-5 bg-paper px-6 pt-6 pb-10">

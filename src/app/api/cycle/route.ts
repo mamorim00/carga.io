@@ -27,6 +27,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Sintoma inválido." }, { status: 400 });
   }
 
-  const log = addCycleLog({ athleteId: athlete.id, flow, phase, symptoms });
+  const log = await addCycleLog({ athleteId: athlete.id, flow, phase, symptoms });
   return NextResponse.json({ log }, { status: 201 });
 }

@@ -11,13 +11,13 @@ export async function POST(request: Request) {
   const password = typeof body?.password === "string" ? body.password : "";
   if (!email || !password) return NextResponse.json(INVALID, { status: 401 });
 
-  const coach = findCoachByEmail(email);
+  const coach = await findCoachByEmail(email);
   if (coach && verifyPassword(password, coach.passwordHash)) {
     await createSession(coach.id, "COACH");
     return NextResponse.json({ role: "COACH" });
   }
 
-  const athlete = findAthleteByEmail(email);
+  const athlete = await findAthleteByEmail(email);
   if (athlete && athlete.status === "ACTIVE" && athlete.passwordHash && verifyPassword(password, athlete.passwordHash)) {
     await createSession(athlete.id, "ATHLETE");
     return NextResponse.json({ role: "ATHLETE" });

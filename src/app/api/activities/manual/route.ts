@@ -13,6 +13,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "athleteId e durationMin (> 0) são obrigatórios" }, { status: 400 });
   }
 
-  const activity = addManualActivity({ athleteId, durationMin, distanceKm });
+  const activity = await addManualActivity({ athleteId, durationMin, distanceKm });
   return NextResponse.json({ activity }, { status: 201 });
 }

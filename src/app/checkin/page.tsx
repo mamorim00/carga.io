@@ -9,7 +9,7 @@ export default async function CheckinPage({
 }) {
   const { manual } = await searchParams;
   const athlete = await requireAthlete();
-  const pendingActivity = getLatestUnreportedActivity(athlete.id) ?? null;
+  const pendingActivity = (await getLatestUnreportedActivity(athlete.id)) ?? null;
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col bg-paper">

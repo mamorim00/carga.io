@@ -28,18 +28,18 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
   híbrida de carga externa — e um score composto de bem-estar (`wellnessComposite`, sono + humor + hidratação menos
   dor muscular e estresse, em 1–5). Todos surgem no `/progress` do atleta e no `/dashboard/[athleteId]` do
   treinador, não só no motor.
-- **Camada de dados** (`src/lib/data.ts`): hoje em memória, com um elenco de exemplo já semeado com 40 dias de
-  histórico (um atleta em zona de risco, um em atenção, o resto ideal, e um atleta sem wearable que registra
-  manualmente) para que o painel e o progresso mostrem números reais desde o primeiro `npm run dev`. Cada dia
-  treinado também vem com um check-in de bem-estar coerente com a história do atleta. Documentado 1:1 com
-  `prisma/schema.prisma`, o schema real do produto — trocar essa camada por Prisma + Postgres não muda as páginas
-  ou rotas acima dela. **Importante**: o estado vive em `globalThis`, não em `let`/`const` de módulo — a Next.js
-  compila Route Handlers, Páginas/Server Components e Proxy como pacotes ("layers") separados, cada um com sua
-  própria instância deste módulo; sem isso, uma atividade registrada via `POST /api/activities/manual` ficava
-  invisível para a própria página `/checkin` logo em seguida (confirmado tanto em `next dev` quanto em
-  `next start`). `globalThis` garante que todas as layers enxerguem os mesmos arrays dentro de **um processo**. Isso
-  não resolve múltiplas instâncias/regiões em produção — é o mesmo limite de sempre (sem banco real, sem estado
-  compartilhado entre processos) só que agora também documentado onde dói de verdade.
+- **Camada de dados** (`src/lib/data.ts`): Postgres real via `@prisma/client`, contra o schema em
+  `prisma/schema.prisma` — sem camada em memória, sem `DATABASE_URL` fictício. O elenco de exemplo (um atleta em
+  zona de risco, um em atenção, o resto ideal, e um atleta sem wearable que registra manualmente, todos com 40
+  dias de histórico e check-ins de bem-estar coerentes) é semeado uma vez por banco, não uma vez por processo: a
+  primeira leitura que não encontra o treinador demo semeia; qualquer outra corrida (mesmo processo, outro
+  processo, outra região) encontra o treinador já lá e não repete. ACWR/monotonia/strain nunca ficam guardados
+  como um total acumulado — são recalculados a cada leitura a partir das atividades e check-ins de RPE brutos
+  (`getDailyLoadsSeries`), então não existe estado derivado que possa dessincronizar do que gerou ele. O
+  `PrismaClient` em si vive em `globalThis`, não em `const` de módulo — o mesmo padrão que os docs da própria
+  Next.js recomendam para não abrir um pool de conexões por "layer" de compilação (Route Handler, Página, Proxy);
+  ao contrário do estado em memória de antes, isso hoje é só uma otimização de conexões, não uma exigência de
+  correção, já que os dados em si moram no Postgres e já são visíveis de qualquer processo/região sem ajuda.
 - **Fluxo do atleta**: aceitar convite (nome + modalidade(s) vêm do treinador; data de nascimento + sexo são
   informados pelo próprio atleta ao criar a senha) → onboarding → conectar Strava (simulado) ou registrar treino
   manualmente (sem relógio) → check-in de RPE (CR-10) + bem-estar (sono, dor muscular, humor, estresse, hidratação)
@@ -89,22 +89,31 @@ vazio, separada da demo.
 
 ```bash
 npm install
-npm run dev       # http://localhost:3000
-npm test          # 67 testes (motor de métricas, camada de dados, senha, sessão, apresentação)
+npx prisma generate  # gera o client do Prisma (precisa rodar de novo sempre que o schema mudar)
+npm run dev           # http://localhost:3000 — precisa de PRISMA_DATABASE_URL apontando pra um Postgres real
+npm test              # 67 testes; os de src/lib/data.test.ts precisam do mesmo Postgres alcançável
 npm run lint
 ```
+
+`npm run build` (o que o Vercel roda) já faz `prisma db push --accept-data-loss` antes do `next build`, contra
+`PRISMA_DATABASE_URL` — não existe passo manual de migração separado hoje. Não há histórico de migrations
+(`prisma migrate dev` nunca rodou — precisa de uma conexão que este ambiente de sandbox não consegue fazer, ver
+abaixo); é `db push` aplicando o schema diretamente, aceitável nesta fase, mas sem o histórico incremental que
+`migrate` daria.
 
 ## Notas do ambiente onde isto foi construído
 
 - `next/font/google` foi trocado por uma pilha de fontes do sistema em `src/app/layout.tsx` porque o sandbox de
   build não tinha acesso de saída a `fonts.googleapis.com` — troque de volta (ou self-host com `next/font/local`)
   em qualquer ambiente com acesso normal à rede.
-- Migração para Postgres real: **em andamento, pausada a meio caminho**. Já existe um `DATABASE_URL` real
-  (Prisma Postgres, via integração do Vercel) num `.env` local — sem versionamento, nunca commitado — mas ainda não
-  rodei `prisma generate`/`db push` contra ele nem troquei `src/lib/data.ts` pelo client do Prisma (isso muda toda
-  função de `data.ts` para `async`, e cada chamador precisa de `await`). Ver `docs/mvp-tasks.md`, item 6, para o
-  que falta exatamente. Ao contrário da nota anterior deste arquivo, `binaries.prisma.sh` respondeu (404, não
-  bloqueio) neste ambiente — a limitação de rede pode já não se aplicar aqui, mas isso só se confirma tentando.
+- Migração para Postgres real: **feita, mas não testada localmente** — só verificada pelo deploy real do Vercel.
+  O sandbox onde isto foi escrito bloqueia conexão direta (TCP bruto) a bancos Postgres por política de rede —
+  só HTTPS passa. `prisma generate` funciona aqui (baixa o engine via HTTPS de `binaries.prisma.sh`), mas
+  `prisma db push`/qualquer query real contra `PRISMA_DATABASE_URL` não — `P1001: Can't reach database server`.
+  Por isso todo `src/lib/data.ts` (e os ~20 arquivos que o chamam) foi escrito e compilado (`next build` tipa
+  contra os tipos gerados do Prisma sem precisar de conexão real) sem nunca rodar contra o banco de verdade — a
+  primeira execução real acontece no build/runtime do próprio Vercel, que tem rede normal. Se algo se comportar
+  diferente do esperado em produção, comece por aí, não por aqui.
 - `SESSION_SECRET` não está definida em lugar nenhum — sem ela, as sessões são assinadas com uma chave de
   desenvolvimento fixa e pública (ver `src/lib/session-token.ts`), o que é aceitável para rodar localmente mas
   **nunca** em produção. Defina `SESSION_SECRET` (ex.: `openssl rand -base64 32`) nas variáveis de ambiente do
@@ -114,7 +123,7 @@ npm run lint
 
 Lista completa e detalhada, com o que já está pronto e o que falta, em `docs/mvp-tasks.md`. Prioridades imediatas:
 
-- [ ] Trocar `src/lib/data.ts` por Prisma + Postgres — em andamento (ver acima)
+- [x] Trocar `src/lib/data.ts` por Prisma + Postgres — feito (ver acima); falta só confirmar no deploy real
 - [ ] OAuth real do Strava (hoje o botão só simula a conexão)
 - [ ] Enviar o link de convite por e-mail de verdade, em vez de só mostrar na tela do treinador
 - [ ] RBAC mais rico (assistente técnico, fisio, fisiologista, admin de org — o enum `Role` já existe no schema)

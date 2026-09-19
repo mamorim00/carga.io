@@ -3,7 +3,8 @@ import { AcceptInviteForm } from "./AcceptInviteForm";
 
 export default async function AcceptInvitePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const athlete = getAthleteByInviteToken(token);
+  const athlete = await getAthleteByInviteToken(token);
+  const coach = athlete ? await getCoach(athlete.coachId) : null;
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-between bg-ink px-8 pt-16 pb-10 text-paper">
@@ -18,7 +19,7 @@ export default async function AcceptInvitePage({ params }: { params: Promise<{ t
               Olá, {athlete.name.split(" ")[0]}.
             </h1>
             <p className="max-w-xs text-sm leading-relaxed text-[#8b8878]">
-              {getCoach(athlete.coachId)?.name ?? "Seu treinador"} te convidou para acompanhar sua carga de treino
+              {coach?.name ?? "Seu treinador"} te convidou para acompanhar sua carga de treino
               pelo Carga. Crie uma senha para {athlete.email} e ativar sua conta.
             </p>
           </>

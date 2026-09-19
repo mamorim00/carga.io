@@ -14,9 +14,12 @@ function fmt(n: number | null): string {
 
 export default async function ProgressPage() {
   const athlete = await requireAthlete();
-  const summary = getAthleteLoadSummary(athlete.id);
-  const activities = getAthleteActivityFeed(athlete.id, 5);
-  const [latestWellness] = getWellnessHistory(athlete.id, 1);
+  const [summary, activities, wellnessHistory] = await Promise.all([
+    getAthleteLoadSummary(athlete.id),
+    getAthleteActivityFeed(athlete.id, 5),
+    getWellnessHistory(athlete.id, 1),
+  ]);
+  const [latestWellness] = wellnessHistory;
   const zone = summary.zone
     ? { label: ZONE_LABEL[summary.zone], note: ZONE_NOTE[summary.zone] }
     : null;

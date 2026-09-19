@@ -36,15 +36,17 @@ export default async function AthleteDetailPage({
 }) {
   const coach = await requireCoach();
   const { athleteId } = await params;
-  const athlete = getAthlete(athleteId);
+  const athlete = await getAthlete(athleteId);
   // notFound() rather than a 403: a coach browsing another org's athlete id
   // shouldn't learn the id is valid at all.
   if (!athlete || athlete.coachId !== coach.id) notFound();
 
-  const summary = getAthleteLoadSummary(athleteId);
-  const activities = getAthleteActivityFeed(athleteId, 10);
-  const wellness = getWellnessHistory(athleteId, 5);
-  const painReports = getAthletePainReports(athleteId, 5);
+  const [summary, activities, wellness, painReports] = await Promise.all([
+    getAthleteLoadSummary(athleteId),
+    getAthleteActivityFeed(athleteId, 10),
+    getWellnessHistory(athleteId, 5),
+    getAthletePainReports(athleteId, 5),
+  ]);
   const style = summary.zone ? ZONE_STYLE[summary.zone] : { dot: "#9aa69f", border: "var(--line)", text: "#9aa69f" };
   const maxLoad = Math.max(...summary.last7Days, 1);
   const days = ["S", "T", "Q", "Q", "S", "S", "D"];

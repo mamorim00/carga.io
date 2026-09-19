@@ -6,7 +6,7 @@ import { CycleForm } from "./CycleForm";
 
 export default async function CyclePage() {
   const athlete = await requireAthlete();
-  const logs = getAthleteCycleLogs(athlete.id, 5);
+  const logs = await getAthleteCycleLogs(athlete.id, 5);
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col bg-paper">

@@ -18,11 +18,11 @@ export async function POST(request: Request) {
   if (password.length < 8) {
     return NextResponse.json({ error: "A senha precisa ter pelo menos 8 caracteres." }, { status: 400 });
   }
-  if (isEmailTaken(email)) {
+  if (await isEmailTaken(email)) {
     return NextResponse.json({ error: "Já existe uma conta com este e-mail." }, { status: 409 });
   }
 
-  const coach = createCoachAccount({ orgName, name, email, passwordHash: hashPassword(password) });
+  const coach = await createCoachAccount({ orgName, name, email, passwordHash: hashPassword(password) });
   await createSession(coach.id, "COACH");
   return NextResponse.json({ coach: { id: coach.id, name: coach.name, email: coach.email } }, { status: 201 });
 }

@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const athlete = acceptAthleteInvite({ token, passwordHash: hashPassword(password), birthDate, sex });
+    const athlete = await acceptAthleteInvite({ token, passwordHash: hashPassword(password), birthDate, sex });
     await createSession(athlete.id, "ATHLETE");
     return NextResponse.json({ ok: true });
   } catch (err) {
