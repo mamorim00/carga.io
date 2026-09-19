@@ -5,15 +5,20 @@ import {
   ewmaAcwr,
   externalLoadFromHrZones,
   internalLoad,
+  monotony,
+  strain,
 } from "./metrics";
 import { hashPassword } from "./password";
 import type {
   Activity,
   AthleteLoadSummary,
   Athlete,
+  BodyPart,
   Coach,
   Org,
   PainReport,
+  Sex,
+  Sport,
   SessionReport,
   WellnessCheckin,
 } from "./types";
@@ -96,7 +101,9 @@ function isoDaysAgo(days: number): string {
   return d.toISOString();
 }
 
-type WellnessCurve = (dayIndex: number) => Pick<WellnessCheckin, "sleep" | "soreness" | "mood" | "stress">;
+type WellnessCurve = (
+  dayIndex: number,
+) => Pick<WellnessCheckin, "sleep" | "soreness" | "mood" | "stress" | "hydration">;
 
 /**
  * Builds `days` days of activity history for one athlete (oldest first),
@@ -170,7 +177,9 @@ function seedAthlete(opts: {
   coachId: string;
   name: string;
   email: string;
-  sport: Athlete["sport"];
+  sports: Sport[];
+  birthDate: string;
+  sex: Sex;
   hasWearable: boolean;
   curve: (dayIndex: number) => { rpe: number; durationMin: number } | null;
   wellness?: WellnessCurve;
@@ -182,7 +191,9 @@ function seedAthlete(opts: {
     coachId: opts.coachId,
     name: opts.name,
     email: opts.email,
-    sport: opts.sport,
+    sports: opts.sports,
+    birthDate: opts.birthDate,
+    sex: opts.sex,
     hasWearable: opts.hasWearable,
     // Seeded athletes start ACTIVE (with a demo password — see README) so
     // the demo roster is reachable through the same real login as any
@@ -223,11 +234,19 @@ function seed() {
     coachId: coach.id,
     name: "Marina Alves",
     email: "marina.alves@atleta.com",
-    sport: "RUNNING",
+    sports: ["RUNNING"],
+    birthDate: "1996-03-14",
+    sex: "FEMALE",
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => (d % 2 === 0 ? { rpe: 5 + (d % 3), durationMin: 35 + (d % 4) * 5 } : null),
-    wellness: (d) => ({ sleep: 4 + (d % 2), soreness: 1 + (d % 2), mood: 5 - (d % 2), stress: 1 + (d % 2) }),
+    wellness: (d) => ({
+      sleep: 4 + (d % 2),
+      soreness: 1 + (d % 2),
+      mood: 5 - (d % 2),
+      stress: 1 + (d % 2),
+      hydration: 4,
+    }),
   });
   loadsByAthlete.set(marina.athlete.id, marina.loads);
 
@@ -236,11 +255,19 @@ function seed() {
     coachId: coach.id,
     name: "Diego Ferreira",
     email: "diego.ferreira@atleta.com",
-    sport: "TRIATHLON",
+    sports: ["RUNNING", "CYCLING"], // multi-sport: trains both, no dedicated triathlon block
+    birthDate: "1993-11-02",
+    sex: "MALE",
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => (d % 2 === 1 ? { rpe: 4 + (d % 4), durationMin: 40 + (d % 5) * 4 } : null),
-    wellness: (d) => ({ sleep: 4, soreness: 2 + (d % 2), mood: 4, stress: 1 + (d % 2) }),
+    wellness: (d) => ({
+      sleep: 4,
+      soreness: 2 + (d % 2),
+      mood: 4,
+      stress: 1 + (d % 2),
+      hydration: 3 + (d % 2),
+    }),
   });
   loadsByAthlete.set(diego.athlete.id, diego.loads);
 
@@ -251,7 +278,9 @@ function seed() {
     coachId: coach.id,
     name: "Camila Souza",
     email: "camila.souza@atleta.com",
-    sport: "RUNNING",
+    sports: ["RUNNING"],
+    birthDate: "1999-07-22",
+    sex: "FEMALE",
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => {
@@ -260,10 +289,14 @@ function seed() {
     },
     wellness: (d) =>
       d >= 33
-        ? { sleep: 2, soreness: 5, mood: 2, stress: 4 + (d % 2) }
-        : { sleep: 4, soreness: 2, mood: 4, stress: 2 },
+        ? { sleep: 2, soreness: 5, mood: 2, stress: 4 + (d % 2), hydration: 2 }
+        : { sleep: 4, soreness: 2, mood: 4, stress: 2, hydration: 4 },
   });
   loadsByAthlete.set(camila.athlete.id, camila.loads);
+  // Pain reports so the coach's pain-map review isn't empty on first load —
+  // consistent with her heavy last-7-days block above.
+  addPainReport({ athleteId: camila.athlete.id, bodyPart: "KNEE_R", intensity: 6, note: "Dói ao descer escadas." });
+  addPainReport({ athleteId: camila.athlete.id, bodyPart: "LOWER_BACK", intensity: 4 });
 
   // Trending up but not yet critical → ATTENTION. Wellness slides down the same ramp.
   const bruno = seedAthlete({
@@ -271,7 +304,9 @@ function seed() {
     coachId: coach.id,
     name: "Bruno Castro",
     email: "bruno.castro@atleta.com",
-    sport: "CYCLING",
+    sports: ["CYCLING"],
+    birthDate: "1990-01-30",
+    sex: "MALE",
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => {
@@ -285,6 +320,7 @@ function seed() {
         soreness: Math.min(5, Math.round(1 + ramp * 3)),
         mood: Math.max(2, Math.round(4 - ramp * 2)),
         stress: Math.min(5, Math.round(1 + ramp * 3)),
+        hydration: Math.max(2, Math.round(4 - ramp * 2)),
       };
     },
   });
@@ -295,11 +331,13 @@ function seed() {
     coachId: coach.id,
     name: "Ana Paula Lima",
     email: "ana.lima@atleta.com",
-    sport: "RUNNING",
+    sports: ["RUNNING"],
+    birthDate: "1988-09-05",
+    sex: "FEMALE",
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => (d % 2 === 0 ? { rpe: 5, durationMin: 38 } : null),
-    wellness: () => ({ sleep: 4, soreness: 2, mood: 4, stress: 2 }),
+    wellness: () => ({ sleep: 4, soreness: 2, mood: 4, stress: 2, hydration: 4 }),
   });
   loadsByAthlete.set(ana.athlete.id, ana.loads);
 
@@ -310,14 +348,16 @@ function seed() {
     coachId: coach.id,
     name: "Thiago Nunes",
     email: "thiago.nunes@atleta.com",
-    sport: "TRIATHLON",
+    sports: ["TRIATHLON"],
+    birthDate: "2001-05-18",
+    sex: "MALE",
     hasWearable: false,
     source: "MANUAL",
     curve: (d) => {
       if (d >= 35) return null; // nothing logged in the last ~5 days
       return d % 3 === 0 ? { rpe: 6, durationMin: 45 } : null;
     },
-    wellness: () => ({ sleep: 3, soreness: 3, mood: 3, stress: 3 }),
+    wellness: () => ({ sleep: 3, soreness: 3, mood: 3, stress: 3, hydration: 3 }),
   });
   loadsByAthlete.set(thiago.athlete.id, thiago.loads);
 }
@@ -385,7 +425,7 @@ export function createAthleteInvite(input: {
   coachId: string;
   name: string;
   email: string;
-  sport: Athlete["sport"];
+  sports: Sport[];
 }): Athlete {
   const athlete: Athlete = {
     id: id("ath"),
@@ -393,7 +433,11 @@ export function createAthleteInvite(input: {
     coachId: input.coachId,
     name: input.name,
     email: input.email,
-    sport: input.sport,
+    sports: input.sports,
+    // Self-reported by the athlete at invite acceptance, not known by the
+    // coach at invite time.
+    birthDate: null,
+    sex: "UNSPECIFIED",
     hasWearable: false,
     status: "INVITED",
     passwordHash: null,
@@ -428,12 +472,19 @@ export function getAthleteByInviteToken(token: string): Athlete | undefined {
   );
 }
 
-/** Activates an invited athlete's account with the password they just set. */
-export function acceptAthleteInvite(input: { token: string; passwordHash: string }): Athlete {
+/** Activates an invited athlete's account with the password and profile info they just set. */
+export function acceptAthleteInvite(input: {
+  token: string;
+  passwordHash: string;
+  birthDate: string;
+  sex: Sex;
+}): Athlete {
   const athlete = getAthleteByInviteToken(input.token);
   if (!athlete) throw new Error("convite inválido ou expirado");
   athlete.status = "ACTIVE";
   athlete.passwordHash = input.passwordHash;
+  athlete.birthDate = input.birthDate;
+  athlete.sex = input.sex;
   athlete.inviteToken = null;
   athlete.inviteExpiresAt = null;
   return athlete;
@@ -476,15 +527,20 @@ export function getAthleteLoadSummary(athleteId: string): AthleteLoadSummary {
   const loads = loadsByAthlete.get(athleteId) ?? [];
   const acwr = loads.length ? ewmaAcwr(loads) : null;
   const last7 = loads.slice(-7);
+  // Foster monotony/strain are computed over the same 7-day window as
+  // weeklyLoad, and both need at least one non-zero day to be meaningful.
+  const hasRecentLoad = last7.some((l) => l > 0);
   const activitiesForAthlete = getAthleteActivities(athleteId);
   return {
     athleteId,
     name: athlete.name,
-    sport: athlete.sport,
+    sports: athlete.sports,
     acwr,
     zone: acwr == null ? null : classifyAcwr(acwr),
     weeklyLoad: Math.round(last7.reduce((a, b) => a + b, 0)),
     last7Days: last7,
+    monotony: hasRecentLoad ? monotony(last7) : null,
+    strain: hasRecentLoad ? strain(last7) : null,
     lastSyncedAt: activitiesForAthlete[0]?.startedAt ?? null,
     hasWearable: athlete.hasWearable,
   };
@@ -531,6 +587,7 @@ export function submitCheckin(input: {
   soreness: number;
   mood: number;
   stress: number;
+  hydration: number;
 }): { sessionReport: SessionReport; wellnessCheckin: WellnessCheckin } {
   const activity = activities.find((a) => a.id === input.activityId);
   if (!activity || activity.athleteId !== input.athleteId) {
@@ -554,6 +611,7 @@ export function submitCheckin(input: {
     soreness: input.soreness,
     mood: input.mood,
     stress: input.stress,
+    hydration: input.hydration,
   };
   wellnessCheckins.push(wellnessCheckin);
 
@@ -570,7 +628,7 @@ export function submitCheckin(input: {
 
 export function addPainReport(input: {
   athleteId: string;
-  bodyPart: string;
+  bodyPart: BodyPart;
   intensity: number;
   note?: string;
 }): PainReport {
@@ -584,4 +642,26 @@ export function addPainReport(input: {
   };
   painReports.push(report);
   return report;
+}
+
+/** An athlete's own pain reports, most recent first. */
+export function getAthletePainReports(athleteId: string, limit = 10): PainReport[] {
+  return painReports
+    .filter((p) => p.athleteId === athleteId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit);
+}
+
+export interface RosterPainReport extends PainReport {
+  athleteName: string;
+}
+
+/** Pain reports across a coach's whole roster, most recent first — the "pain map review". */
+export function getPainReportsForCoach(coachId: string, limit = 20): RosterPainReport[] {
+  const rosterAthleteIds = new Set(athletes.filter((a) => a.coachId === coachId).map((a) => a.id));
+  return painReports
+    .filter((p) => rosterAthleteIds.has(p.athleteId))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit)
+    .map((p) => ({ ...p, athleteName: getAthlete(p.athleteId)?.name ?? "—" }));
 }

@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import type { Sport } from "@/lib/types";
-import { SPORT_LABEL } from "@/lib/presentation";
+import { SPORT_LABEL, formatSports } from "@/lib/presentation";
 
 interface PendingInvite {
   athleteId: string;
   name: string;
   email: string;
-  sport: Sport;
+  sports: Sport[];
   inviteUrl: string;
 }
 
@@ -18,30 +18,38 @@ export function InviteManager({ initialPending }: { initialPending: PendingInvit
   const [pending, setPending] = useState(initialPending);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [sport, setSport] = useState<Sport>("RUNNING");
+  const [sports, setSports] = useState<Sport[]>(["RUNNING"]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  function toggleSport(s: Sport) {
+    setSports((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (sports.length === 0) {
+      setError("Selecione ao menos uma modalidade.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       const res = await fetch("/api/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, sport }),
+        body: JSON.stringify({ name, email, sports }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Falha ao criar convite");
       setPending((prev) => [
-        { athleteId: data.athlete.id, name: data.athlete.name, email: data.athlete.email, sport: data.athlete.sport, inviteUrl: data.inviteUrl },
+        { athleteId: data.athlete.id, name: data.athlete.name, email: data.athlete.email, sports: data.athlete.sports, inviteUrl: data.inviteUrl },
         ...prev,
       ]);
       setName("");
       setEmail("");
-      setSport("RUNNING");
+      setSports(["RUNNING"]);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -94,20 +102,27 @@ export function InviteManager({ initialPending }: { initialPending: PendingInvit
               className="rounded-md border border-line bg-paper px-3 py-2.5 text-sm"
             />
           </label>
-          <label className="flex flex-col gap-1.5 text-[13px] font-medium text-ink">
-            Modalidade
-            <select
-              value={sport}
-              onChange={(e) => setSport(e.target.value as Sport)}
-              className="rounded-md border border-line bg-paper px-3 py-2.5 text-sm"
-            >
-              {SPORTS.map((s) => (
-                <option key={s} value={s}>
-                  {SPORT_LABEL[s]}
-                </option>
-              ))}
-            </select>
-          </label>
+        </div>
+        <div className="flex flex-col gap-1.5 text-[13px] font-medium text-ink">
+          Modalidade(s)
+          <div className="flex flex-wrap gap-1.5">
+            {SPORTS.map((s) => (
+              <button
+                key={s}
+                type="button"
+                aria-pressed={sports.includes(s)}
+                onClick={() => toggleSport(s)}
+                className="rounded-full border px-3 py-1.5 text-[12.5px] font-medium"
+                style={
+                  sports.includes(s)
+                    ? { background: "var(--ink)", borderColor: "var(--ink)", color: "var(--paper)" }
+                    : { background: "var(--paper)", borderColor: "var(--line)", color: "var(--ink)" }
+                }
+              >
+                {SPORT_LABEL[s]}
+              </button>
+            ))}
+          </div>
         </div>
         {error && <p className="text-sm text-risk">{error}</p>}
         <button
@@ -139,7 +154,7 @@ export function InviteManager({ initialPending }: { initialPending: PendingInvit
                   <div>
                     <div className="text-[13px] font-semibold text-ink">{p.name}</div>
                     <div className="text-[11.5px] text-muted">
-                      {p.email} · {SPORT_LABEL[p.sport]}
+                      {p.email} · {formatSports(p.sports)}
                     </div>
                   </div>
                   <button

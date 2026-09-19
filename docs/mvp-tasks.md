@@ -15,8 +15,9 @@ works end to end, not just "modeled in the schema."
       Link, not a short code; no email sending yet, the coach copies/sends the link themselves.
 - [x] Single-coach roster model for MVP — each coach signup gets its own Org; no shared/multi-coach
       rosters (matches "deferred to Phase 2").
-- [ ] Basic profile fields: name, sport(s), birthdate, sex. **Partial** — name and one `sport` per
-      athlete exist (`src/lib/types.ts`); no birthdate, no sex, no multi-sport.
+- [x] Basic profile fields: name, sport(s), birthdate, sex — `Athlete.sports: Sport[]` (multi-sport),
+      `birthDate`/`sex` self-reported by the athlete at invite acceptance (`/invite/[token]`), sport(s)
+      picked by the coach at invite time (`/dashboard/invite`).
 
 ## Strava integration
 
@@ -37,17 +38,16 @@ works end to end, not just "modeled in the schema."
 - [ ] Post-activity push/notification prompt when a new Strava activity lands. Needs both Strava
       sync (above) and a push mechanism (web push/VAPID or a native app) — no decision made yet.
 - [x] Session RPE input (Foster CR-10 scale) — `src/app/checkin/CheckinForm.tsx`.
-- [ ] Wellness check-in form: sleep, soreness, mood, stress, hydration. **Partial** — sleep,
-      soreness, mood, stress all exist and work; no hydration field.
-- [ ] Pain map: body diagram, tap-to-mark location, intensity, note. **Partial** — the data write
-      path exists (`addPainReport` in `src/lib/data.ts`, mirrors `PainReport` in
-      `prisma/schema.prisma`) but nothing calls it: no body diagram, no form, no page.
+- [x] Wellness check-in form: sleep, soreness, mood, stress, hydration — all five, all required —
+      `src/app/checkin/CheckinForm.tsx`.
+- [x] Pain map: body diagram, tap-to-mark location, intensity, note — `src/components/BodyMap.tsx`
+      (16 front-view hotspots + 2 "not visible from front" chips for upper/lower back), `/pain`
+      (athlete self-reports anytime, not tied to a check-in), backed by `addPainReport`.
 - [ ] Menstrual cycle log: flow, symptoms, cycle phase. Modeled in `prisma/schema.prisma`
       (`CycleLog`) but not implemented in the in-memory layer or the app at all.
 - [x] Personal trends view: athlete's own load history and wellness over time — `/progress`
-      (ACWR, weekly load chart, recent activities) plus `/dashboard/[athleteId]` for the coach's
-      view of the same athlete. Monotony/strain are computed (`src/lib/metrics.ts`) but not
-      plotted anywhere yet — see the dashboard section below.
+      (ACWR, monotony, strain, wellness composite, weekly load chart, recent activities) plus
+      `/dashboard/[athleteId]` for the coach's view of the same athlete.
 - [x] Manual activity entry fallback (no wearable / Strava not synced yet) — `/checkin?manual=1`,
       `POST /api/activities/manual`.
 
@@ -58,11 +58,11 @@ works end to end, not just "modeled in the schema."
       HR zone). Pace-based (running) and power-based (cycling) load are **not** implemented — HR
       zones are the only external-load input today, and only Strava-sourced seed data has them.
 - [x] Combined daily/weekly load — `combinedLoad()`.
-- [x] Monotony: mean ÷ 7-day stdev — `monotony()`. Computed, unit-tested, **not surfaced in any UI**.
-- [x] Strain: weekly load × monotony — `strain()`. Same as above: computed, not shown anywhere.
+- [x] Monotony: mean ÷ 7-day stdev — `monotony()`, surfaced on `/progress` and `/dashboard/[athleteId]`.
+- [x] Strain: weekly load × monotony — `strain()`, surfaced alongside monotony.
 - [x] ACWR: EWMA, 7-day acute : 28-day chronic — `ewmaAcwr()`, matches the spec's chosen method.
-- [ ] Wellness composite score — sleep/soreness/mood/stress are stored and shown as four separate
-      numbers; nothing combines them into one score.
+- [x] Wellness composite score — `wellnessComposite()` (sleep + mood + hydration, soreness/stress
+      inverted, averaged to one 1–5 score), shown next to ACWR on `/progress`.
 - [ ] Background job to recompute metrics on new data. **Partial in spirit, not in mechanism** —
       `submitCheckin()` recomputes that athlete's load synchronously, inline, on the request that
       submits the check-in. That's correct today but isn't a job queue, and a real DB move should
@@ -71,9 +71,9 @@ works end to end, not just "modeled in the schema."
 ## Coach dashboard (web)
 
 - [x] Roster view: athletes with ACWR status (green/amber/red) — `/dashboard`.
-- [x] Per-athlete detail page: daily/weekly load chart — `/dashboard/[athleteId]`. Monotony and
-      strain charts are **not** there (engine has the numbers; page doesn't plot them).
-- [ ] Pain map review across roster — blocked on the pain map itself existing (see above).
+- [x] Per-athlete detail page: daily/weekly load, monotony, strain — `/dashboard/[athleteId]`.
+      Numbers, not charts, for monotony/strain (matches the weekly-load bar chart's own simplicity).
+- [x] Pain map review across roster — `/dashboard/pain`, via `getPainReportsForCoach`.
 - [ ] Non-compliance flag: athlete hasn't synced/logged RPE in N days. **Partial** — every roster
       card and the athlete detail page show "last synced" / time-ago text, but nothing turns that
       into an alert or a threshold-based flag; `AlertRule` exists in `prisma/schema.prisma` and is
@@ -125,40 +125,37 @@ something from you first.
 
 ### Buildable now — no accounts, keys, or decisions needed from you
 
-1. **Athlete profile fields** — birthdate, sex, multi-sport. Small, and other items (RPE norms,
-   cycle log eligibility) depend on it, so it's worth doing early.
-2. **Wellness composite score** — one number from sleep/soreness/mood/stress, surfaced next to RPE.
-3. **Surface monotony & strain** — the engine already computes both; add them to `/progress` and
-   `/dashboard/[athleteId]` next to the existing ACWR card.
-4. **Hydration field** on the wellness check-in.
-5. **Pain map** — body diagram + tap-to-mark + intensity + note, wired to the `addPainReport` path
-   that already exists; then **pain map review across roster** on the coach side.
-6. **Menstrual cycle log** — data layer (mirroring `CycleLog` in the schema) + a simple log form.
-7. **Non-compliance flag** — pick a threshold (e.g., no sync/RPE in 3 days), badge it on the roster
+1. **Menstrual cycle log** — data layer (mirroring `CycleLog` in the schema) + a simple log form.
+2. **Non-compliance flag** — pick a threshold (e.g., no sync/RPE in 3 days), badge it on the roster
    and athlete detail page.
-8. **CSV/PDF export** of an athlete's load history.
-9. **Responsive pass on the coach dashboard** — collapse the sidebar, stack the grid, on narrow
+3. **CSV/PDF export** of an athlete's load history.
+4. **Responsive pass on the coach dashboard** — collapse the sidebar, stack the grid, on narrow
    viewports.
-10. **Manual "pull now" resync button** — build the UI/action now against the existing (simulated)
-    sync state; it'll call the real Strava pull once that exists, same as everywhere else in this
-    app that's honest about being a stand-in today.
+5. **Manual "pull now" resync button** — build the UI/action now against the existing (simulated)
+   sync state; it'll call the real Strava pull once that exists, same as everywhere else in this
+   app that's honest about being a stand-in today.
+
+### In progress
+
+6. **Real Postgres + Prisma migration** — connection string is in hand (Prisma Postgres, via
+   Vercel's integration) and sitting in a local, gitignored `.env`. Not yet done: running the
+   first `prisma db push`/`migrate dev` against it, then swapping `src/lib/data.ts`'s in-memory
+   arrays for the real Prisma client (same function signatures, so nothing above it changes) and
+   converting every caller to `await` it. This is the one item that removes a whole class of
+   "in-memory, resets on restart, and even forks per Next.js compilation layer within one
+   process" caveats from the README at once.
 
 ### Needs something from you before I can build it for real
 
-11. **Real Postgres + Prisma migration** — give me a `DATABASE_URL` (Vercel Postgres, Neon,
-    Supabase all work) and I'll run the first migration and swap `src/lib/data.ts` for the real
-    Prisma client. This is the one item that removes a whole class of "in-memory, resets on
-    restart" caveats from the README at once, so it's worth prioritizing once you're ready to
-    commit to a real database.
-12. **Strava OAuth integration** — register an app at
-    [developers.strava.com](https://developers.strava.com) and give me the client id/secret (as
-    environment variables, never pasted in chat); then I can build consent, token storage +
-    refresh, activity sync (webhook or polling), and field mapping.
-13. **Push notifications** — decide web push (needs VAPID keys, works in-browser) vs. a native
-    app (bigger project) before "post-activity push prompt" can be built.
-14. **Billing** — a Pix-capable provider account (Mercado Pago/PagSeguro/Efí, or Stripe if its Pix
-    support covers Brazil for your case) and a Stripe account for cards; then subscription tiers
-    and management.
+7. **Strava OAuth integration** — register an app at
+   [developers.strava.com](https://developers.strava.com) and give me the client id/secret (as
+   environment variables, never pasted in chat); then I can build consent, token storage +
+   refresh, activity sync (webhook or polling), and field mapping.
+8. **Push notifications** — decide web push (needs VAPID keys, works in-browser) vs. a native
+   app (bigger project) before "post-activity push prompt" can be built.
+9. **Billing** — a Pix-capable provider account (Mercado Pago/PagSeguro/Efí, or Stripe if its Pix
+   support covers Brazil for your case) and a Stripe account for cards; then subscription tiers
+   and management.
 
 Pick any numbered item and tell me to go — I'll work it the same way as everything so far: build
 it, verify it (tests + a real click-through, not just a green build), and push.

@@ -14,7 +14,7 @@ import { SESSION_COOKIE, decodeSession } from "@/lib/session-token";
 // node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md.
 
 const COACH_ONLY = ["/dashboard"];
-const ATHLETE_ONLY = ["/checkin", "/progress", "/onboarding"];
+const ATHLETE_ONLY = ["/checkin", "/progress", "/onboarding", "/pain"];
 const AUTH_PAGES = ["/login", "/signup"];
 
 function matches(pathname: string, prefixes: string[]): boolean {

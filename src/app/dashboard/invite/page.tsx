@@ -14,7 +14,7 @@ export default async function InvitePage() {
     athleteId: a.id,
     name: a.name,
     email: a.email,
-    sport: a.sport,
+    sports: a.sports,
     inviteUrl: `${origin}/invite/${a.inviteToken}`,
   }));
 

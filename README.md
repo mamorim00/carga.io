@@ -25,7 +25,9 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
   do Proxy.
 - **Motor de métricas** (`src/lib/metrics.ts`): carga interna (RPE × duração), carga externa (TRIMP por zona de FC),
   monotonia, strain e ACWR por EWMA (7d agudo : 28d crônico) — a mesma base científica do eLoad, mais a camada
-  híbrida de carga externa.
+  híbrida de carga externa — e um score composto de bem-estar (`wellnessComposite`, sono + humor + hidratação menos
+  dor muscular e estresse, em 1–5). Todos surgem no `/progress` do atleta e no `/dashboard/[athleteId]` do
+  treinador, não só no motor.
 - **Camada de dados** (`src/lib/data.ts`): hoje em memória, com um elenco de exemplo já semeado com 40 dias de
   histórico (um atleta em zona de risco, um em atenção, o resto ideal, e um atleta sem wearable que registra
   manualmente) para que o painel e o progresso mostrem números reais desde o primeiro `npm run dev`. Cada dia
@@ -38,20 +40,30 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
   `next start`). `globalThis` garante que todas as layers enxerguem os mesmos arrays dentro de **um processo**. Isso
   não resolve múltiplas instâncias/regiões em produção — é o mesmo limite de sempre (sem banco real, sem estado
   compartilhado entre processos) só que agora também documentado onde dói de verdade.
-- **Fluxo do atleta**: aceitar convite (ou entrar, se já ativo) → onboarding → conectar Strava (simulado) ou
-  registrar treino manualmente (sem relógio) → check-in de RPE (CR-10) + bem-estar → progresso pessoal (ACWR, carga
-  semanal, bem-estar, atividades recentes). A carga é sempre a combinação de duas partes — a atividade (duração,
-  distância, FC, de onde veio) e o check-in (RPE + bem-estar) — nunca uma automação que dispensa o check-in.
+- **Fluxo do atleta**: aceitar convite (nome + modalidade(s) vêm do treinador; data de nascimento + sexo são
+  informados pelo próprio atleta ao criar a senha) → onboarding → conectar Strava (simulado) ou registrar treino
+  manualmente (sem relógio) → check-in de RPE (CR-10) + bem-estar (sono, dor muscular, humor, estresse, hidratação)
+  → progresso pessoal (ACWR, monotonia, strain, bem-estar composto, carga semanal, atividades recentes) → mapa de
+  dor (`/pain`) a qualquer momento, não só logo após um treino. A carga é sempre a combinação de duas partes — a
+  atividade (duração, distância, FC, de onde veio) e o check-in (RPE + bem-estar) — nunca uma automação que
+  dispensa o check-in.
 - **Painel do treinador**: elenco com status de ACWR por atleta (só os `ACTIVE`; convites pendentes ficam em
   `/dashboard/invite`), carga semanal, e faixas de risco (ideal / atenção / risco) agrupando o elenco inteiro;
-  cada atleta abre em `/dashboard/[athleteId]` com ACWR, carga semanal, atividades recentes e bem-estar recente —
-  só se pertencer à equipe do treinador logado.
+  cada atleta abre em `/dashboard/[athleteId]` com ACWR, monotonia, strain, carga semanal, atividades recentes,
+  bem-estar recente e mapa de dor recente — só se pertencer à equipe do treinador logado. `/dashboard/pain` reúne
+  os registros de dor de todo o elenco, mais recentes primeiro.
+- **Mapa de dor** (`src/components/BodyMap.tsx`): diagrama do corpo (frente) com 16 regiões clicáveis mais dois
+  botões para "costas" (não visíveis de frente) — sem ilustração anatômica de verdade, só formas simples o
+  bastante para cada região ser inequivocamente clicável. `POST /api/pain` pega o atleta pela sessão, não por um
+  `athleteId` no corpo da requisição (ao contrário de `/api/checkin` e `/api/activities/manual`, uma lacuna
+  pré-existente que não foi corrigida ali para não alterar o contrato dessas rotas sem necessidade).
 - **Feed de atividades** (`src/lib/data.ts#getAthleteActivityFeed`, `src/components/ActivityFeed.tsx`): junta cada
   atividade com o RPE do check-in correspondente (quando já enviado), usado tanto no progresso do atleta quanto no
   detalhe do atleta no painel do treinador.
 - **API**: `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/invites` (criar
   convite), `POST /api/invites/[athleteId]/revoke`, `POST /api/invites/accept`, `POST /api/activities/manual`
-  (registro manual de treino) e `POST /api/checkin` (RPE + bem-estar) — todos validados.
+  (registro manual de treino), `POST /api/checkin` (RPE + bem-estar) e `POST /api/pain` (mapa de dor) — todos
+  validados.
 
 ## Contas de demonstração
 
@@ -70,7 +82,7 @@ vazio, separada da demo.
 ```bash
 npm install
 npm run dev       # http://localhost:3000
-npm test          # 42 testes (motor de métricas, camada de dados, senha, sessão)
+npm test          # 54 testes (motor de métricas, camada de dados, senha, sessão)
 npm run lint
 ```
 
@@ -79,9 +91,12 @@ npm run lint
 - `next/font/google` foi trocado por uma pilha de fontes do sistema em `src/app/layout.tsx` porque o sandbox de
   build não tinha acesso de saída a `fonts.googleapis.com` — troque de volta (ou self-host com `next/font/local`)
   em qualquer ambiente com acesso normal à rede.
-- `prisma generate` não roda aqui pelo mesmo motivo (sem acesso a `binaries.prisma.sh`) — o schema em
-  `prisma/schema.prisma` está pronto; rode `npx prisma generate && npx prisma migrate dev` assim que houver
-  `DATABASE_URL` de um Postgres real.
+- Migração para Postgres real: **em andamento, pausada a meio caminho**. Já existe um `DATABASE_URL` real
+  (Prisma Postgres, via integração do Vercel) num `.env` local — sem versionamento, nunca commitado — mas ainda não
+  rodei `prisma generate`/`db push` contra ele nem troquei `src/lib/data.ts` pelo client do Prisma (isso muda toda
+  função de `data.ts` para `async`, e cada chamador precisa de `await`). Ver `docs/mvp-tasks.md`, item 6, para o
+  que falta exatamente. Ao contrário da nota anterior deste arquivo, `binaries.prisma.sh` respondeu (404, não
+  bloqueio) neste ambiente — a limitação de rede pode já não se aplicar aqui, mas isso só se confirma tentando.
 - `SESSION_SECRET` não está definida em lugar nenhum — sem ela, as sessões são assinadas com uma chave de
   desenvolvimento fixa e pública (ver `src/lib/session-token.ts`), o que é aceitável para rodar localmente mas
   **nunca** em produção. Defina `SESSION_SECRET` (ex.: `openssl rand -base64 32`) nas variáveis de ambiente do
@@ -89,12 +104,12 @@ npm run lint
 
 ## Próximos passos
 
-Ver o roadmap completo (Fases 1–4) no doc do projeto. Prioridades imediatas para fechar a Fase 1:
+Lista completa e detalhada, com o que já está pronto e o que falta, em `docs/mvp-tasks.md`. Prioridades imediatas:
 
-- [ ] Trocar `src/lib/data.ts` por Prisma + Postgres (resolve de vez o limite de estado por processo acima)
+- [ ] Trocar `src/lib/data.ts` por Prisma + Postgres — em andamento (ver acima)
 - [ ] OAuth real do Strava (hoje o botão só simula a conexão)
 - [ ] Enviar o link de convite por e-mail de verdade, em vez de só mostrar na tela do treinador
 - [ ] RBAC mais rico (assistente técnico, fisio, fisiologista, admin de org — o enum `Role` já existe no schema)
-- [ ] Mapa de dor (diagrama corporal) e registro de ciclo menstrual
+- [ ] Registro de ciclo menstrual (o mapa de dor já existe)
 - [ ] Exportação CSV/PDF
 - [ ] Cobrança (Stripe/Pix)

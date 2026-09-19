@@ -52,6 +52,37 @@ enum AthleteStatus {
   ACTIVE
 }
 
+// Self-reported at invite acceptance; used for RPE/ACWR norms and cycle-log
+// eligibility, never inferred.
+enum Sex {
+  FEMALE
+  MALE
+  UNSPECIFIED
+}
+
+// Body regions selectable on the pain map (front-view hotspots, plus two
+// "not visible from the front" chips for the back).
+enum BodyPart {
+  HEAD
+  NECK
+  SHOULDER_L
+  SHOULDER_R
+  CHEST
+  ABDOMEN
+  ARM_L
+  ARM_R
+  HIP_L
+  HIP_R
+  THIGH_L
+  THIGH_R
+  KNEE_L
+  KNEE_R
+  LOWER_LEG_L
+  LOWER_LEG_R
+  UPPER_BACK
+  LOWER_BACK
+}
+
 model Org {
   id        String   @id @default(cuid())
   name      String
@@ -97,9 +128,13 @@ model Athlete {
   coachId   String
   name      String
   email     String        @unique
-  sport     Sport
+  sports    Sport[]
   status    AthleteStatus @default(INVITED)
   createdAt DateTime      @default(now())
+
+  // Self-reported at invite acceptance; null/UNSPECIFIED while INVITED.
+  birthDate DateTime?
+  sex       Sex       @default(UNSPECIFIED)
 
   // Set once the invite is accepted; null while status is INVITED.
   passwordHash    String?
@@ -155,7 +190,7 @@ model WellnessCheckin {
   soreness  Int // 1–5
   mood      Int // 1–5
   stress    Int // 1–5
-  hydration Int? // 1–5
+  hydration Int // 1–5
 
   athlete Athlete @relation(fields: [athleteId], references: [id])
 
@@ -165,7 +200,7 @@ model WellnessCheckin {
 model PainReport {
   id        String   @id @default(cuid())
   athleteId String
-  bodyPart  String
+  bodyPart  BodyPart
   intensity Int // 1–10
   note      String?
   createdAt DateTime @default(now())

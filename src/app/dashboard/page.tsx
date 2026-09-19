@@ -31,6 +31,9 @@ export default async function DashboardPage() {
           <Link href="/dashboard/invite" className="rounded-md px-3 py-2.5 text-[#8b8878]">
             Convidar atleta
           </Link>
+          <Link href="/dashboard/pain" className="rounded-md px-3 py-2.5 text-[#8b8878]">
+            Mapa de dor
+          </Link>
           <span className="flex items-center justify-between rounded-md px-3 py-2.5 text-[#8b8878]">
             Alertas
             {riskCount > 0 && (

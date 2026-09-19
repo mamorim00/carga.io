@@ -2,13 +2,20 @@ import Link from "next/link";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { LogoutButton } from "@/components/LogoutButton";
 import { requireAthlete } from "@/lib/auth";
-import { getAthleteActivityFeed, getAthleteLoadSummary } from "@/lib/data";
-import { ZONE_LABEL, ZONE_NOTE } from "@/lib/presentation";
+import { getAthleteActivityFeed, getAthleteLoadSummary, getWellnessHistory } from "@/lib/data";
+import { wellnessComposite } from "@/lib/metrics";
+import { ZONE_LABEL, ZONE_NOTE, monotonyNote } from "@/lib/presentation";
+
+/** Guards against Infinity (metrics.monotony() when a week's loads have zero variance). */
+function fmt(n: number | null): string {
+  return n != null && Number.isFinite(n) ? n.toFixed(2) : "—";
+}
 
 export default async function ProgressPage() {
   const athlete = await requireAthlete();
   const summary = getAthleteLoadSummary(athlete.id);
   const activities = getAthleteActivityFeed(athlete.id, 5);
+  const [latestWellness] = getWellnessHistory(athlete.id, 1);
   const zone = summary.zone
     ? { label: ZONE_LABEL[summary.zone], note: ZONE_NOTE[summary.zone] }
     : null;
@@ -41,6 +48,28 @@ export default async function ProgressPage() {
         </div>
       </div>
 
+      <div className="flex gap-px overflow-hidden rounded-lg border border-line bg-line">
+        <div className="flex-1 bg-surface px-4 py-3">
+          <div className="text-[11px] text-muted">Monotonia</div>
+          <div className="font-display mt-0.5 text-[17px] font-semibold text-ink">{fmt(summary.monotony)}</div>
+        </div>
+        <div className="flex-1 bg-surface px-4 py-3">
+          <div className="text-[11px] text-muted">Strain</div>
+          <div className="font-display mt-0.5 text-[17px] font-semibold text-ink">{fmt(summary.strain)}</div>
+        </div>
+        {latestWellness && (
+          <div className="flex-1 bg-surface px-4 py-3">
+            <div className="text-[11px] text-muted">Bem-estar</div>
+            <div className="font-display mt-0.5 text-[17px] font-semibold text-ink">
+              {wellnessComposite(latestWellness).toFixed(1)}/5
+            </div>
+          </div>
+        )}
+      </div>
+      {summary.monotony != null && (
+        <p className="-mt-2 text-[11px] leading-relaxed text-muted">{monotonyNote(summary.monotony)}</p>
+      )}
+
       <div>
         <div className="mb-2 flex items-center justify-between">
           <span className="text-[13.5px] font-semibold text-ink">Carga semanal</span>
@@ -61,13 +90,22 @@ export default async function ProgressPage() {
         </div>
       </div>
 
-      <Link
-        href="/checkin"
-        className="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3.5"
-      >
-        <span className="text-[13px] font-medium text-ink">Fazer novo check-in</span>
-        <span className="text-muted">→</span>
-      </Link>
+      <div className="flex gap-2">
+        <Link
+          href="/checkin"
+          className="flex flex-1 items-center justify-between rounded-lg border border-line bg-surface px-4 py-3.5"
+        >
+          <span className="text-[13px] font-medium text-ink">Fazer novo check-in</span>
+          <span className="text-muted">→</span>
+        </Link>
+        <Link
+          href="/pain"
+          className="flex flex-1 items-center justify-between rounded-lg border border-line bg-surface px-4 py-3.5"
+        >
+          <span className="text-[13px] font-medium text-ink">Registrar dor</span>
+          <span className="text-muted">→</span>
+        </Link>
+      </div>
 
       <div>
         <div className="mb-2 flex items-center justify-between">

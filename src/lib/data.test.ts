@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   acceptAthleteInvite,
   addManualActivity,
+  addPainReport,
   createAthleteInvite,
   createCoachAccount,
   findAthleteByEmail,
@@ -9,7 +10,10 @@ import {
   getAthlete,
   getAthleteActivityFeed,
   getAthleteByInviteToken,
+  getAthleteLoadSummary,
+  getAthletePainReports,
   getLatestUnreportedActivity,
+  getPainReportsForCoach,
   getPendingInvites,
   getRoster,
   getWellnessHistory,
@@ -76,6 +80,7 @@ describe("check-in flow", () => {
       soreness: 4,
       mood: 3,
       stress: 3,
+      hydration: 3,
     });
 
     expect(sessionReport.rpe).toBe(7);
@@ -95,6 +100,7 @@ describe("check-in flow", () => {
         soreness: 2,
         mood: 4,
         stress: 2,
+        hydration: 4,
       }),
     ).toThrow();
   });
@@ -122,6 +128,7 @@ describe("getAthleteActivityFeed", () => {
       soreness: 2,
       mood: 4,
       stress: 2,
+      hydration: 4,
     });
 
     const feed = getAthleteActivityFeed(marina.athleteId, 3);
@@ -159,7 +166,7 @@ describe("athlete invites", () => {
       coachId: demoCoach.id,
       name: "Convidado Teste",
       email: "convidado@teste.com",
-      sport: "RUNNING",
+      sports: ["RUNNING"],
     });
     expect(athlete.status).toBe("INVITED");
     expect(athlete.passwordHash).toBeNull();
@@ -170,15 +177,23 @@ describe("athlete invites", () => {
     const found = getAthleteByInviteToken(athlete.inviteToken!);
     expect(found?.id).toBe(athlete.id);
 
-    const accepted = acceptAthleteInvite({ token: athlete.inviteToken!, passwordHash: "scrypt:whatever:hash2" });
+    const accepted = acceptAthleteInvite({
+      token: athlete.inviteToken!,
+      passwordHash: "scrypt:whatever:hash2",
+      birthDate: "1995-06-01",
+      sex: "FEMALE",
+    });
     expect(accepted.status).toBe("ACTIVE");
+    expect(accepted.sex).toBe("FEMALE");
     expect(accepted.inviteToken).toBeNull();
     expect(getPendingInvites(demoCoach.id).map((a) => a.id)).not.toContain(athlete.id);
     expect(getRoster(demoCoach.id).map((a) => a.athleteId)).toContain(athlete.id);
   });
 
   it("rejects accepting an unknown or already-used token", () => {
-    expect(() => acceptAthleteInvite({ token: "not-a-real-token", passwordHash: "x" })).toThrow();
+    expect(() =>
+      acceptAthleteInvite({ token: "not-a-real-token", passwordHash: "x", birthDate: "1995-01-01", sex: "MALE" }),
+    ).toThrow();
   });
 
   it("lets the inviting coach revoke a pending invite, but not another coach", () => {
@@ -193,7 +208,7 @@ describe("athlete invites", () => {
       coachId: demoCoach.id,
       name: "Revogar Teste",
       email: "revogar@teste.com",
-      sport: "OTHER",
+      sports: ["OTHER"],
     });
 
     expect(revokeInvite(athlete.id, other.id)).toBe(false);
@@ -213,5 +228,86 @@ describe("athlete invites", () => {
 describe("findAthleteByEmail", () => {
   it("is case-insensitive", () => {
     expect(findAthleteByEmail("MARINA.ALVES@ATLETA.COM")?.name).toBe("Marina Alves");
+  });
+});
+
+describe("athlete profile fields", () => {
+  it("supports more than one sport per athlete", () => {
+    const diego = findAthleteByEmail("diego.ferreira@atleta.com")!;
+    expect(diego.sports).toEqual(["RUNNING", "CYCLING"]);
+  });
+
+  it("seeds a birth date and sex for every demo athlete", () => {
+    const marina = findAthleteByEmail("marina.alves@atleta.com")!;
+    expect(marina.birthDate).not.toBeNull();
+    expect(marina.sex).toBe("FEMALE");
+  });
+
+  it("leaves an invited athlete's birth date and sex unset until they accept", () => {
+    const athlete = createAthleteInvite({
+      orgId: demoCoach.orgId,
+      coachId: demoCoach.id,
+      name: "Perfil Teste",
+      email: "perfil@teste.com",
+      sports: ["OTHER"],
+    });
+    expect(athlete.birthDate).toBeNull();
+    expect(athlete.sex).toBe("UNSPECIFIED");
+  });
+});
+
+describe("getAthleteLoadSummary — monotony and strain", () => {
+  it("computes both for a seeded athlete with a full week of history", () => {
+    const marina = findAthleteByEmail("marina.alves@atleta.com")!;
+    const summary = getAthleteLoadSummary(marina.id);
+    expect(summary.monotony).not.toBeNull();
+    expect(summary.strain).not.toBeNull();
+    expect(summary.strain!).toBeGreaterThan(0);
+  });
+
+  it("computes monotony for the ramping-up athlete too, not just the steady ones", () => {
+    const bruno = findAthleteByEmail("bruno.castro@atleta.com")!;
+    const summary = getAthleteLoadSummary(bruno.id);
+    expect(summary.monotony).not.toBeNull();
+    expect(summary.strain).not.toBeNull();
+  });
+});
+
+describe("wellness check-ins include hydration", () => {
+  it("is present on every seeded wellness check-in", () => {
+    const marina = findAthleteByEmail("marina.alves@atleta.com")!;
+    const history = getWellnessHistory(marina.id);
+    expect(history.length).toBeGreaterThan(0);
+    for (const w of history) expect(w.hydration).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("pain reports", () => {
+  it("lets an athlete log pain and read it back", () => {
+    const thiago = findAthleteByEmail("thiago.nunes@atleta.com")!;
+    addPainReport({ athleteId: thiago.id, bodyPart: "KNEE_L", intensity: 3 });
+    addPainReport({ athleteId: thiago.id, bodyPart: "LOWER_BACK", intensity: 5, note: "Após treino longo" });
+
+    const reports = getAthletePainReports(thiago.id, 5);
+    const lowerBack = reports.find((r) => r.bodyPart === "LOWER_BACK");
+    expect(lowerBack?.note).toBe("Após treino longo");
+    expect(reports.some((r) => r.bodyPart === "KNEE_L")).toBe(true);
+  });
+
+  it("rolls up pain reports across a coach's whole roster", () => {
+    const roster = getPainReportsForCoach(demoCoach.id, 50);
+    const camila = roster.find((r) => r.athleteName === "Camila Souza");
+    expect(camila).toBeDefined();
+    expect(roster.every((r) => typeof r.athleteName === "string")).toBe(true);
+  });
+
+  it("never includes another coach's athletes", () => {
+    const other = createCoachAccount({
+      orgName: "Isolada",
+      name: "Isolado",
+      email: "isolado@teste.com",
+      passwordHash: "scrypt:whatever:hash",
+    });
+    expect(getPainReportsForCoach(other.id, 50)).toHaveLength(0);
   });
 });

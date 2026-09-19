@@ -8,6 +8,35 @@ export type ActivitySource = "STRAVA" | "GARMIN" | "APPLE_HEALTH" | "MANUAL";
 export type AcwrZone = "IDEAL" | "ATTENTION" | "RISK";
 /** ACTIVE once the athlete follows their invite link and sets a password. */
 export type AthleteStatus = "INVITED" | "ACTIVE";
+/** Self-reported at invite acceptance; used for RPE/ACWR norms and cycle-log eligibility. */
+export type Sex = "FEMALE" | "MALE" | "UNSPECIFIED";
+
+/**
+ * Body regions selectable on the pain map (`src/components/BodyMap.tsx`).
+ * Most are tappable hotspots on the front-view silhouette; the two "costas"
+ * entries aren't visible from the front and are offered as separate chips.
+ */
+export const BODY_PARTS = [
+  "HEAD",
+  "NECK",
+  "SHOULDER_L",
+  "SHOULDER_R",
+  "CHEST",
+  "ABDOMEN",
+  "ARM_L",
+  "ARM_R",
+  "HIP_L",
+  "HIP_R",
+  "THIGH_L",
+  "THIGH_R",
+  "KNEE_L",
+  "KNEE_R",
+  "LOWER_LEG_L",
+  "LOWER_LEG_R",
+  "UPPER_BACK",
+  "LOWER_BACK",
+] as const;
+export type BodyPart = (typeof BODY_PARTS)[number];
 
 export interface Org {
   id: string;
@@ -28,7 +57,11 @@ export interface Athlete {
   coachId: string;
   name: string;
   email: string;
-  sport: Sport;
+  /** At least one; the coach picks these when creating the invite. */
+  sports: Sport[];
+  /** ISO date; null until the athlete sets it at invite acceptance. */
+  birthDate: string | null;
+  sex: Sex;
   /** true once the athlete has connected a wearable (Strava, at launch). */
   hasWearable: boolean;
   status: AthleteStatus;
@@ -67,12 +100,13 @@ export interface WellnessCheckin {
   soreness: number; // 1–5
   mood: number; // 1–5
   stress: number; // 1–5
+  hydration: number; // 1–5
 }
 
 export interface PainReport {
   id: string;
   athleteId: string;
-  bodyPart: string;
+  bodyPart: BodyPart;
   intensity: number; // 1–10
   note?: string;
   createdAt: string;
@@ -81,11 +115,14 @@ export interface PainReport {
 export interface AthleteLoadSummary {
   athleteId: string;
   name: string;
-  sport: Sport;
+  sports: Sport[];
   acwr: number | null;
   zone: AcwrZone | null;
   weeklyLoad: number;
   last7Days: number[]; // combined load per day, oldest first
+  /** Foster monotony/strain over the same last7Days window; null until 7 days of history exist. */
+  monotony: number | null;
+  strain: number | null;
   lastSyncedAt: string | null;
   hasWearable: boolean;
 }

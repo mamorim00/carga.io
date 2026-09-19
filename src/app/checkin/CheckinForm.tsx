@@ -76,6 +76,7 @@ export function CheckinForm({
   const [soreness, setSoreness] = useState(2);
   const [mood, setMood] = useState(4);
   const [stress, setStress] = useState(2);
+  const [hydration, setHydration] = useState(4);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,7 +108,7 @@ export function CheckinForm({
       const res = await fetch("/api/checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ athleteId, activityId: activity.id, rpe, sleep, soreness, mood, stress }),
+        body: JSON.stringify({ athleteId, activityId: activity.id, rpe, sleep, soreness, mood, stress, hydration }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "Falha ao enviar check-in");
       router.push("/progress");
@@ -199,6 +200,7 @@ export function CheckinForm({
         <Scale label="Dor muscular" value={soreness} onChange={setSoreness} color="var(--warn)" />
         <Scale label="Humor" value={mood} onChange={setMood} color="#3b6fa0" />
         <Scale label="Estresse" value={stress} onChange={setStress} color="var(--risk)" />
+        <Scale label="Hidratação" value={hydration} onChange={setHydration} color="#3b8fa0" />
       </div>
 
       {error && <p className="text-sm text-risk">{error}</p>}
