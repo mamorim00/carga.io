@@ -30,26 +30,26 @@ function Scale({
 }) {
   return (
     <div>
-      <div className="mb-2 flex justify-between">
+      <div className="mb-2.5 flex justify-between">
         <span className="text-[13px] text-[#4a473c]">{label}</span>
         <span className="text-[12.5px] font-semibold text-ink">{value}/5</span>
       </div>
-      <div className="relative h-[5px] rounded-full bg-line">
-        <div
-          className="absolute top-0 left-0 h-full rounded-full transition-all"
-          style={{ width: `${((value - 1) / 4) * 100}%`, background: color }}
-        />
-        <div className="absolute inset-0 flex justify-between">
-          {[1, 2, 3, 4, 5].map((n) => (
-            <button
-              key={n}
-              type="button"
-              aria-label={`${label}: ${n} de 5`}
-              onClick={() => onChange(n)}
-              className="-mt-2 h-5 w-5 rounded-full"
-            />
-          ))}
-        </div>
+      <div className="flex gap-1.5">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            aria-label={`${label}: ${n} de 5`}
+            aria-pressed={value === n}
+            onClick={() => onChange(n)}
+            className="h-8 flex-1 cursor-pointer rounded-md border transition-colors"
+            style={
+              n <= value
+                ? { background: color, borderColor: color }
+                : { background: "var(--surface)", borderColor: "var(--line)" }
+            }
+          />
+        ))}
       </div>
     </div>
   );
@@ -76,6 +76,7 @@ export function CheckinForm({
   const [soreness, setSoreness] = useState(2);
   const [mood, setMood] = useState(4);
   const [stress, setStress] = useState(2);
+  const [hydration, setHydration] = useState(4);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,7 +108,7 @@ export function CheckinForm({
       const res = await fetch("/api/checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ athleteId, activityId: activity.id, rpe, sleep, soreness, mood, stress }),
+        body: JSON.stringify({ athleteId, activityId: activity.id, rpe, sleep, soreness, mood, stress, hydration }),
       });
       if (!res.ok) throw new Error((await res.json()).error ?? "Falha ao enviar check-in");
       router.push("/progress");
@@ -199,6 +200,7 @@ export function CheckinForm({
         <Scale label="Dor muscular" value={soreness} onChange={setSoreness} color="var(--warn)" />
         <Scale label="Humor" value={mood} onChange={setMood} color="#3b6fa0" />
         <Scale label="Estresse" value={stress} onChange={setStress} color="var(--risk)" />
+        <Scale label="Hidratação" value={hydration} onChange={setHydration} color="#3b8fa0" />
       </div>
 
       {error && <p className="text-sm text-risk">{error}</p>}

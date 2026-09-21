@@ -1,72 +1,278 @@
+import crypto from "crypto";
+import { Prisma, PrismaClient } from "@prisma/client";
 import {
   classifyAcwr,
   combinedLoad,
   ewmaAcwr,
   externalLoadFromHrZones,
   internalLoad,
+  monotony,
+  strain,
+  type HrZoneMinutes,
 } from "./metrics";
+import { hashPassword } from "./password";
 import type {
   Activity,
+  Assessment,
+  AssessmentKind,
   AthleteLoadSummary,
   Athlete,
+  BodyPart,
   Coach,
+  CycleFlow,
+  CycleLog,
+  CyclePhase,
+  CycleSymptom,
+  Exercise,
+  ExerciseCategory,
+  ExercisePrescription,
+  Measurement,
+  MeasurementCategory,
   Org,
   PainReport,
+  Sex,
+  Sport,
   SessionReport,
   WellnessCheckin,
 } from "./types";
 
 /**
- * In-memory data layer for the prototype build.
+ * Data layer — real Postgres via Prisma (prisma/schema.prisma is the source
+ * of truth for the shapes below). The in-memory prototype this replaced is
+ * gone; every function here does a real query.
  *
- * This stands in for Prisma + Postgres (see prisma/schema.prisma for the
- * real schema) so the app is runnable in this sandbox, where outbound
- * access to fetch Prisma's query-engine binary is blocked and there's no
- * live Postgres instance. Every function here has a 1:1 real counterpart
- * once DATABASE_URL points at a real database — swap the body, keep the
- * signature, and the pages/API routes above it don't change.
+ * Two things carried over from the in-memory version, deliberately:
+ *
+ * - The PrismaClient itself lives on `globalThis`, not a module-level
+ *   `const` — the standard fix (same one Next.js's own docs recommend) for
+ *   Next.js compiling Route Handlers, Pages/Server Components, and Proxy as
+ *   separate bundles that would otherwise each open their own connection
+ *   pool. Unlike the old in-memory store, this is purely a connection-count
+ *   optimization now — the data itself lives in Postgres, so it's already
+ *   shared across every layer/process/region without it.
+ * - Daily load history (for ACWR/monotony/strain) is never stored as a
+ *   running array. It's recomputed on every read from raw Activity +
+ *   SessionReport rows over a rolling calendar window — see
+ *   `getDailyLoadsSeries`. docs/mvp-tasks.md's metrics-engine section calls
+ *   this out as the intended long-term shape ("recompute-on-write... a real
+ *   DB move should probably keep it this way") — recompute-on-read is the
+ *   same idea, simpler, and it means there's no derived state that can ever
+ *   drift from the activities/session-reports it's derived from.
+ *
+ * Seeding is idempotent and DB-backed: on first use in a given database,
+ * whichever request gets there first seeds the demo org/coach/athletes;
+ * every other caller (this process or any other) sees the demo coach
+ * already exists and skips it. See `ensureSeeded`.
+ *
+ * Built and typechecked (`prisma generate` + `next build`) without a live
+ * database connection — this sandbox's egress policy blocks raw-TCP
+ * Postgres, only HTTPS. Verified against the real thing only via the live
+ * Vercel deploy, which does have normal network access. See README.md.
  */
 
-let nextId = 1;
-function id(prefix: string): string {
-  return `${prefix}_${nextId++}`;
+const globalForCarga = globalThis as unknown as {
+  __cargaPrisma?: PrismaClient;
+  __cargaSeeded?: Promise<void>;
+};
+
+const prisma = (globalForCarga.__cargaPrisma ??= new PrismaClient());
+
+function newId(prefix: string): string {
+  return `${prefix}_${crypto.randomUUID()}`;
 }
 
-const org: Org = { id: "org_1", name: "Fundo BH" };
-const coach: Coach = { id: "coach_1", name: "Rafael Mendes", email: "rafael@fundobh.com.br" };
+function generateInviteToken(): string {
+  return crypto.randomBytes(24).toString("base64url");
+}
 
-const athletes: Athlete[] = [];
-const activities: Activity[] = [];
-const sessionReports: SessionReport[] = [];
-const wellnessCheckins: WellnessCheckin[] = [];
-const painReports: PainReport[] = [];
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-function isoDaysAgo(days: number): string {
+// ---- Row -> app-type mapping ------------------------------------------
+// types.ts is hand-written rather than importing @prisma/client's generated
+// types directly, so pages/API routes don't change if the data layer ever
+// changes again. These map Prisma's Date objects to the ISO strings that
+// contract expects (and fill in the couple of fields, like
+// Activity.hasSessionReport, that are derived rather than stored).
+
+function toCoach(c: Prisma.CoachGetPayload<object>): Coach {
+  return { id: c.id, orgId: c.orgId, name: c.name, email: c.email, passwordHash: c.passwordHash };
+}
+
+function toAthlete(a: Prisma.AthleteGetPayload<object>): Athlete {
+  return {
+    id: a.id,
+    orgId: a.orgId,
+    coachId: a.coachId,
+    name: a.name,
+    email: a.email,
+    sports: a.sports as Sport[],
+    birthDate: a.birthDate ? a.birthDate.toISOString() : null,
+    sex: a.sex as Sex,
+    hasWearable: a.hasWearable,
+    status: a.status,
+    passwordHash: a.passwordHash,
+    inviteToken: a.inviteToken,
+    inviteExpiresAt: a.inviteExpiresAt ? a.inviteExpiresAt.toISOString() : null,
+  };
+}
+
+function toActivity(a: Prisma.ActivityGetPayload<object>, hasSessionReport: boolean): Activity {
+  return {
+    id: a.id,
+    athleteId: a.athleteId,
+    source: a.source,
+    startedAt: a.startedAt.toISOString(),
+    durationMin: a.durationMin,
+    distanceKm: a.distanceKm ?? undefined,
+    avgHr: a.avgHr ?? undefined,
+    hrZones: (a.hrZones as HrZoneMinutes | null) ?? undefined,
+    hasSessionReport,
+  };
+}
+
+function toSessionReport(s: Prisma.SessionReportGetPayload<object>): SessionReport {
+  return { id: s.id, athleteId: s.athleteId, activityId: s.activityId, rpe: s.rpe, createdAt: s.createdAt.toISOString() };
+}
+
+function toWellnessCheckin(w: Prisma.WellnessCheckinGetPayload<object>): WellnessCheckin {
+  return {
+    id: w.id,
+    athleteId: w.athleteId,
+    date: w.date.toISOString(),
+    sleep: w.sleep,
+    soreness: w.soreness,
+    mood: w.mood,
+    stress: w.stress,
+    hydration: w.hydration,
+  };
+}
+
+function toPainReport(p: Prisma.PainReportGetPayload<object>): PainReport {
+  return {
+    id: p.id,
+    athleteId: p.athleteId,
+    bodyPart: p.bodyPart as BodyPart,
+    intensity: p.intensity,
+    note: p.note ?? undefined,
+    createdAt: p.createdAt.toISOString(),
+  };
+}
+
+function toCycleLog(c: Prisma.CycleLogGetPayload<object>): CycleLog {
+  return {
+    id: c.id,
+    athleteId: c.athleteId,
+    date: c.date.toISOString(),
+    flow: (c.flow ?? "NONE") as CycleFlow,
+    symptoms: c.symptoms as CycleSymptom[],
+    phase: (c.phase as CyclePhase | null) ?? null,
+  };
+}
+
+function toMeasurement(m: Prisma.MeasurementGetPayload<object>): Measurement {
+  return {
+    id: m.id,
+    category: m.category as MeasurementCategory,
+    label: m.label,
+    value: m.value ?? null,
+    unit: m.unit ?? null,
+    note: m.note ?? undefined,
+  };
+}
+
+function toAssessment(
+  a: Prisma.AssessmentGetPayload<{ include: { measurements: true } }>,
+): Assessment {
+  return {
+    id: a.id,
+    athleteId: a.athleteId,
+    coachId: a.coachId,
+    kind: a.kind as AssessmentKind,
+    date: a.date.toISOString(),
+    examsNote: a.examsNote ?? undefined,
+    medicationsNote: a.medicationsNote ?? undefined,
+    generalNote: a.generalNote ?? undefined,
+    createdAt: a.createdAt.toISOString(),
+    measurements: a.measurements.map(toMeasurement),
+  };
+}
+
+function toExercise(e: Prisma.ExerciseGetPayload<object>): Exercise {
+  return {
+    id: e.id,
+    name: e.name,
+    category: e.category as ExerciseCategory,
+    instructions: e.instructions ?? undefined,
+    videoUrl: e.videoUrl ?? undefined,
+    source: e.source,
+    externalId: e.externalId ?? undefined,
+  };
+}
+
+function toExercisePrescription(
+  p: Prisma.ExercisePrescriptionGetPayload<{ include: { exercise: true } }>,
+  doneToday: boolean,
+  completedLast7Days: number,
+): ExercisePrescription {
+  return {
+    id: p.id,
+    athleteId: p.athleteId,
+    coachId: p.coachId,
+    exercise: toExercise(p.exercise),
+    sets: p.sets ?? null,
+    reps: p.reps ?? null,
+    frequency: p.frequency ?? undefined,
+    notes: p.notes ?? undefined,
+    active: p.active,
+    createdAt: p.createdAt.toISOString(),
+    doneToday,
+    completedLast7Days,
+  };
+}
+
+// ---- Seeding (idempotent, DB-backed) -----------------------------------
+
+// Every seeded account (the demo coach and all six demo athletes) shares
+// this one password so the demo roster is reachable through the same real
+// login as any account created via signup + invite. See README for the
+// credentials. Hashed once at module load, not per-account.
+const DEMO_PASSWORD_HASH = hashPassword("carga1234");
+const DEMO_COACH_EMAIL = "rafael@fundobh.com.br";
+
+function daysAgoDate(days: number): Date {
   const d = new Date();
   d.setUTCHours(12, 0, 0, 0);
   d.setUTCDate(d.getUTCDate() - days);
-  return d.toISOString();
+  return d;
 }
 
-/**
- * Builds `days` days of activity history for one athlete (oldest first),
- * using a per-day RPE/duration curve, and returns the combined daily loads
- * alongside the created Activity/SessionReport rows.
- */
-function seedHistory(
+type WellnessCurve = (
+  dayIndex: number,
+) => Pick<WellnessCheckin, "sleep" | "soreness" | "mood" | "stress" | "hydration">;
+
+/** Builds `days` days of activity/session-report/wellness rows for one athlete (oldest first). */
+function buildHistory(
   athleteId: string,
   days: number,
   curve: (dayIndex: number) => { rpe: number; durationMin: number } | null,
   source: Activity["source"],
-) {
-  const loads: number[] = [];
+  wellness?: WellnessCurve,
+): {
+  activities: Prisma.ActivityCreateManyInput[];
+  sessionReports: Prisma.SessionReportCreateManyInput[];
+  wellnessCheckins: Prisma.WellnessCheckinCreateManyInput[];
+} {
+  const activities: Prisma.ActivityCreateManyInput[] = [];
+  const sessionReports: Prisma.SessionReportCreateManyInput[] = [];
+  const wellnessCheckins: Prisma.WellnessCheckinCreateManyInput[] = [];
+
   for (let dayIndex = days - 1; dayIndex >= 0; dayIndex--) {
-    const session = curve(days - 1 - dayIndex);
-    if (!session) {
-      loads.push(0);
-      continue;
-    }
-    const activityId = id("act");
+    const relativeDay = days - 1 - dayIndex;
+    const session = curve(relativeDay);
+    if (!session) continue;
+
+    const activityId = newId("act");
+    const startedAt = daysAgoDate(dayIndex);
     const hrZones =
       source === "MANUAL"
         ? undefined
@@ -81,209 +287,682 @@ function seedHistory(
       id: activityId,
       athleteId,
       source,
-      startedAt: isoDaysAgo(dayIndex),
+      startedAt,
       durationMin: session.durationMin,
       distanceKm: Math.round(session.durationMin * 0.19 * 10) / 10,
       avgHr: 140 + Math.round(session.rpe * 3),
-      hrZones,
-      hasSessionReport: true,
+      ...(hrZones ? { hrZones } : {}),
     });
     sessionReports.push({
-      id: id("sr"),
+      id: newId("sr"),
       athleteId,
       activityId,
       rpe: session.rpe,
-      createdAt: isoDaysAgo(dayIndex),
+      createdAt: startedAt,
     });
-    const internal = internalLoad(session.rpe, session.durationMin);
-    const external = hrZones ? externalLoadFromHrZones(hrZones) : undefined;
-    loads.push(combinedLoad(internal, external));
+    if (wellness) {
+      wellnessCheckins.push({
+        id: newId("wc"),
+        athleteId,
+        date: startedAt,
+        ...wellness(relativeDay),
+      });
+    }
   }
-  return loads;
+  return { activities, sessionReports, wellnessCheckins };
 }
 
-function seedAthlete(opts: {
+function buildAthleteSeed(opts: {
+  orgId: string;
+  coachId: string;
   name: string;
   email: string;
-  sport: Athlete["sport"];
+  sports: Sport[];
+  birthDate: string;
+  sex: Sex;
   hasWearable: boolean;
   curve: (dayIndex: number) => { rpe: number; durationMin: number } | null;
+  wellness?: WellnessCurve;
   source: Activity["source"];
-}): { athlete: Athlete; loads: number[] } {
-  const athlete: Athlete = {
-    id: id("ath"),
-    orgId: org.id,
-    coachId: coach.id,
+}): {
+  athlete: Prisma.AthleteCreateManyInput;
+  activities: Prisma.ActivityCreateManyInput[];
+  sessionReports: Prisma.SessionReportCreateManyInput[];
+  wellnessCheckins: Prisma.WellnessCheckinCreateManyInput[];
+} {
+  const athleteId = newId("ath");
+  const athlete: Prisma.AthleteCreateManyInput = {
+    id: athleteId,
+    orgId: opts.orgId,
+    coachId: opts.coachId,
     name: opts.name,
     email: opts.email,
-    sport: opts.sport,
+    sports: opts.sports,
+    birthDate: new Date(opts.birthDate),
+    sex: opts.sex,
     hasWearable: opts.hasWearable,
+    // Seeded athletes start ACTIVE (with a demo password — see README) so
+    // the demo roster is reachable through the same real login as any
+    // account created via signup + invite.
+    status: "ACTIVE",
+    passwordHash: DEMO_PASSWORD_HASH,
   };
-  athletes.push(athlete);
-  const loads = seedHistory(athlete.id, 40, opts.curve, opts.source);
-  return { athlete, loads };
+  const history = buildHistory(athleteId, 40, opts.curve, opts.source, opts.wellness);
+  return { athlete, ...history };
 }
 
-const loadsByAthlete = new Map<string, number[]>();
+async function seed(): Promise<void> {
+  const orgId = newId("org");
+  const coachId = newId("coach");
 
-function seed() {
-  // Steady, well-managed load → IDEAL.
-  const marina = seedAthlete({
+  const athletes: Prisma.AthleteCreateManyInput[] = [];
+  const activities: Prisma.ActivityCreateManyInput[] = [];
+  const sessionReports: Prisma.SessionReportCreateManyInput[] = [];
+  const wellnessCheckins: Prisma.WellnessCheckinCreateManyInput[] = [];
+  const painReports: Prisma.PainReportCreateManyInput[] = [];
+
+  function addAthlete(opts: Parameters<typeof buildAthleteSeed>[0]): string {
+    const built = buildAthleteSeed(opts);
+    athletes.push(built.athlete);
+    activities.push(...built.activities);
+    sessionReports.push(...built.sessionReports);
+    wellnessCheckins.push(...built.wellnessCheckins);
+    return built.athlete.id as string;
+  }
+
+  // Steady, well-managed load → IDEAL. Wellness matches: consistently good.
+  addAthlete({
+    orgId,
+    coachId,
     name: "Marina Alves",
     email: "marina.alves@atleta.com",
-    sport: "RUNNING",
+    sports: ["RUNNING"],
+    birthDate: "1996-03-14",
+    sex: "FEMALE",
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => (d % 2 === 0 ? { rpe: 5 + (d % 3), durationMin: 35 + (d % 4) * 5 } : null),
+    wellness: (d) => ({
+      sleep: 4 + (d % 2),
+      soreness: 1 + (d % 2),
+      mood: 5 - (d % 2),
+      stress: 1 + (d % 2),
+      hydration: 4,
+    }),
   });
-  loadsByAthlete.set(marina.athlete.id, marina.loads);
 
-  const diego = seedAthlete({
+  addAthlete({
+    orgId,
+    coachId,
     name: "Diego Ferreira",
     email: "diego.ferreira@atleta.com",
-    sport: "TRIATHLON",
+    sports: ["RUNNING", "CYCLING"], // multi-sport: trains both, no dedicated triathlon block
+    birthDate: "1993-11-02",
+    sex: "MALE",
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => (d % 2 === 1 ? { rpe: 4 + (d % 4), durationMin: 40 + (d % 5) * 4 } : null),
+    wellness: (d) => ({
+      sleep: 4,
+      soreness: 2 + (d % 2),
+      mood: 4,
+      stress: 1 + (d % 2),
+      hydration: 3 + (d % 2),
+    }),
   });
-  loadsByAthlete.set(diego.athlete.id, diego.loads);
 
-  // Sharp spike in the last 7 days → RISK.
-  const camila = seedAthlete({
+  // Sharp spike in the last 7 days → RISK. Wellness degrades right along with it:
+  // sleep and mood drop, soreness and stress climb once the heavy block starts.
+  const camilaId = addAthlete({
+    orgId,
+    coachId,
     name: "Camila Souza",
     email: "camila.souza@atleta.com",
-    sport: "RUNNING",
+    sports: ["RUNNING"],
+    birthDate: "1999-07-22",
+    sex: "FEMALE",
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => {
       if (d >= 33) return { rpe: 6 + (d % 3), durationMin: 55 + (d % 3) * 6 }; // last 7 days: heavy
       return d % 2 === 0 ? { rpe: 5, durationMin: 32 } : null;
     },
+    wellness: (d) =>
+      d >= 33
+        ? { sleep: 2, soreness: 5, mood: 2, stress: 4 + (d % 2), hydration: 2 }
+        : { sleep: 4, soreness: 2, mood: 4, stress: 2, hydration: 4 },
   });
-  loadsByAthlete.set(camila.athlete.id, camila.loads);
+  // Pain reports so the coach's pain-map review isn't empty on first load —
+  // consistent with her heavy last-7-days block above.
+  painReports.push(
+    { id: newId("pr"), athleteId: camilaId, bodyPart: "KNEE_R", intensity: 6, note: "Dói ao descer escadas." },
+    { id: newId("pr"), athleteId: camilaId, bodyPart: "LOWER_BACK", intensity: 4 },
+  );
 
-  // Trending up but not yet critical → ATTENTION.
-  const bruno = seedAthlete({
+  // Trending up but not yet critical → ATTENTION. Wellness slides down the same ramp.
+  addAthlete({
+    orgId,
+    coachId,
     name: "Bruno Castro",
     email: "bruno.castro@atleta.com",
-    sport: "CYCLING",
+    sports: ["CYCLING"],
+    birthDate: "1990-01-30",
+    sex: "MALE",
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => {
       const ramp = Math.min(d / 39, 1);
       return d % 2 === 0 ? { rpe: 5 + Math.round(ramp * 3), durationMin: 40 + ramp * 25 } : null;
     },
+    wellness: (d) => {
+      const ramp = Math.min(d / 39, 1);
+      return {
+        sleep: Math.max(2, Math.round(4 - ramp * 2)),
+        soreness: Math.min(5, Math.round(1 + ramp * 3)),
+        mood: Math.max(2, Math.round(4 - ramp * 2)),
+        stress: Math.min(5, Math.round(1 + ramp * 3)),
+        hydration: Math.max(2, Math.round(4 - ramp * 2)),
+      };
+    },
   });
-  loadsByAthlete.set(bruno.athlete.id, bruno.loads);
 
-  const ana = seedAthlete({
+  addAthlete({
+    orgId,
+    coachId,
     name: "Ana Paula Lima",
     email: "ana.lima@atleta.com",
-    sport: "RUNNING",
+    sports: ["RUNNING"],
+    birthDate: "1988-09-05",
+    sex: "FEMALE",
     hasWearable: true,
     source: "STRAVA",
     curve: (d) => (d % 2 === 0 ? { rpe: 5, durationMin: 38 } : null),
+    wellness: () => ({ sleep: 4, soreness: 2, mood: 4, stress: 2, hydration: 4 }),
   });
-  loadsByAthlete.set(ana.athlete.id, ana.loads);
 
   // No wearable at all — logs manually, and hasn't in a few days (stale sync).
-  const thiago = seedAthlete({
+  // Wellness is a bit more tired overall: sparser, harder sessions with less recovery in between.
+  addAthlete({
+    orgId,
+    coachId,
     name: "Thiago Nunes",
     email: "thiago.nunes@atleta.com",
-    sport: "TRIATHLON",
+    sports: ["TRIATHLON"],
+    birthDate: "2001-05-18",
+    sex: "MALE",
     hasWearable: false,
     source: "MANUAL",
     curve: (d) => {
       if (d >= 35) return null; // nothing logged in the last ~5 days
       return d % 3 === 0 ? { rpe: 6, durationMin: 45 } : null;
     },
+    wellness: () => ({ sleep: 3, soreness: 3, mood: 3, stress: 3, hydration: 3 }),
   });
-  loadsByAthlete.set(thiago.athlete.id, thiago.loads);
+
+  await prisma.$transaction([
+    prisma.org.create({ data: { id: orgId, name: "Fundo BH" } }),
+    prisma.coach.create({
+      data: { id: coachId, orgId, name: "Rafael Mendes", email: DEMO_COACH_EMAIL, passwordHash: DEMO_PASSWORD_HASH },
+    }),
+    prisma.athlete.createMany({ data: athletes }),
+    prisma.activity.createMany({ data: activities }),
+    prisma.sessionReport.createMany({ data: sessionReports }),
+    prisma.wellnessCheckin.createMany({ data: wellnessCheckins }),
+    prisma.painReport.createMany({ data: painReports }),
+  ]);
 }
 
-seed();
+// A starter set of common injury-prevention exercises, so the library and
+// the prescription flow have something real to show/test with from the
+// first deploy. Fixed ids (not newId()'s random ones) + `skipDuplicates`
+// make seeding this safe to attempt from more than one racing process —
+// unlike the demo coach/roster, there's no unique column to lean on here
+// (a coach can legitimately add their own exercise with any name), so
+// idempotency comes from the id instead. No videoUrl: this app doesn't
+// invent video links (see the Exercise model's own doc comment) — a coach
+// adds their own trusted link per exercise, or edits these later to add one.
+const CURATED_EXERCISES: Prisma.ExerciseCreateManyInput[] = [
+  {
+    id: "ex_curated_corrida_leve",
+    name: "Corrida leve",
+    category: "WARM_UP",
+    instructions: "5–10 min de trote leve para elevar a temperatura corporal antes do treino.",
+  },
+  {
+    id: "ex_curated_skipping_baixo",
+    name: "Skipping baixo",
+    category: "WARM_UP",
+    instructions: "Elevação de joelhos em ritmo baixo, 2x20m.",
+  },
+  {
+    id: "ex_curated_educativo_calcanhar_gluteo",
+    name: "Educativo de calcanhar-glúteo",
+    category: "WARM_UP",
+    instructions: "Corrida educativa levando o calcanhar em direção ao glúteo, 2x20m.",
+  },
+  {
+    id: "ex_curated_prancha_frontal",
+    name: "Prancha frontal",
+    category: "STRENGTHENING",
+    instructions: "Isometria de core mantendo o corpo alinhado, 3x30s.",
+  },
+  {
+    id: "ex_curated_ponte_de_gluteo",
+    name: "Ponte de glúteo",
+    category: "STRENGTHENING",
+    instructions: "Elevação de quadril deitado, ativando o glúteo, 3x15 repetições.",
+  },
+  {
+    id: "ex_curated_afundo_unilateral",
+    name: "Agachamento unilateral (afundo)",
+    category: "STRENGTHENING",
+    instructions: "Afundo controlado, 3x10 repetições de cada lado — foco em estabilidade de joelho e quadril.",
+  },
+  {
+    id: "ex_curated_elevacao_panturrilha",
+    name: "Elevação de panturrilha",
+    category: "STRENGTHENING",
+    instructions: "Elevação nas pontas dos pés, 3x15 repetições — prevenção de lesões de tendão de Aquiles.",
+  },
+  {
+    id: "ex_curated_copenhagen",
+    name: "Copenhagen (adução de quadril)",
+    category: "STRENGTHENING",
+    instructions: "Exercício excêntrico de adutores, 3x10 de cada lado — prevenção de lesão de virilha.",
+  },
+  {
+    id: "ex_curated_nordic_hamstring",
+    name: "Nordic hamstring",
+    category: "STRENGTHENING",
+    instructions: "Exercício excêntrico de isquiotibiais, 3x6 repetições — prevenção de lesão posterior de coxa.",
+  },
+  {
+    id: "ex_curated_mobilidade_tornozelo",
+    name: "Mobilidade de tornozelo",
+    category: "MOBILITY",
+    instructions: "Círculos de tornozelo, 2x10 repetições de cada lado.",
+  },
+  {
+    id: "ex_curated_mobilidade_quadril_90_90",
+    name: "Mobilidade de quadril 90/90",
+    category: "MOBILITY",
+    instructions: "Transição entre apoios com quadril e joelho a 90°, 2x8 de cada lado.",
+  },
+  {
+    id: "ex_curated_rotacao_toracica",
+    name: "Rotação torácica em quadrupedia",
+    category: "MOBILITY",
+    instructions: "Rotação de tronco apoiado em quatro apoios, 2x10 de cada lado.",
+  },
+];
+
+async function ensureExerciseLibrarySeeded(): Promise<void> {
+  const count = await prisma.exercise.count();
+  if (count > 0) return;
+  await prisma.exercise.createMany({ data: CURATED_EXERCISES, skipDuplicates: true });
+}
+
+/**
+ * Runs `seed()` once per database, ever — not once per process. Checks for
+ * the demo coach by email first; if two requests race on a cold start and
+ * both find nothing, the loser's `coach.create` (unique email) throws
+ * P2002, which is treated as "someone else already seeded" rather than an
+ * error. The exercise library is seeded independently of the demo
+ * coach/roster — it's a global, not per-org, catalog, so it needs to exist
+ * even for a coach who signed up before this feature shipped.
+ */
+async function ensureSeeded(): Promise<void> {
+  const existing = await prisma.coach.findUnique({ where: { email: DEMO_COACH_EMAIL } });
+  if (!existing) {
+    try {
+      await seed();
+    } catch (err) {
+      if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002")) throw err;
+    }
+  }
+  await ensureExerciseLibrarySeeded();
+}
+
+/**
+ * Memoized on `globalThis` like the Prisma client itself, so every layer
+ * checks at most once per warm process — except a *failed* attempt (e.g.
+ * the database was briefly unreachable) clears itself so the next caller
+ * retries instead of every future request failing forever off one bad check.
+ */
+function getSeeded(): Promise<void> {
+  if (!globalForCarga.__cargaSeeded) {
+    globalForCarga.__cargaSeeded = ensureSeeded().catch((err) => {
+      globalForCarga.__cargaSeeded = undefined;
+      throw err;
+    });
+  }
+  return globalForCarga.__cargaSeeded;
+}
+
+// ---- Auth: coaches, accounts, sessions ---------------------------------
+
+export async function getOrg(orgId: string): Promise<Org | undefined> {
+  await getSeeded();
+  const org = await prisma.org.findUnique({ where: { id: orgId } });
+  return org ? { id: org.id, name: org.name } : undefined;
+}
+
+export async function getCoach(coachId: string): Promise<Coach | undefined> {
+  await getSeeded();
+  const coach = await prisma.coach.findUnique({ where: { id: coachId } });
+  return coach ? toCoach(coach) : undefined;
+}
+
+export async function findCoachByEmail(email: string): Promise<Coach | undefined> {
+  await getSeeded();
+  const coach = await prisma.coach.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
+  return coach ? toCoach(coach) : undefined;
+}
+
+export async function findAthleteByEmail(email: string): Promise<Athlete | undefined> {
+  await getSeeded();
+  const athlete = await prisma.athlete.findFirst({ where: { email: { equals: email, mode: "insensitive" } } });
+  return athlete ? toAthlete(athlete) : undefined;
+}
+
+/** True if any coach or athlete already uses this email — invites and signup both check this. */
+export async function isEmailTaken(email: string): Promise<boolean> {
+  const [coach, athlete] = await Promise.all([findCoachByEmail(email), findAthleteByEmail(email)]);
+  return Boolean(coach || athlete);
+}
+
+/**
+ * Coach self-signup: creates a brand-new Org and Coach together (there's no
+ * "join an existing org" flow yet — every coach who signs up starts their
+ * own, empty roster, and invites athletes into it from there).
+ */
+export async function createCoachAccount(input: {
+  orgName: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+}): Promise<Coach> {
+  await getSeeded();
+  const org = await prisma.org.create({ data: { id: newId("org"), name: input.orgName } });
+  const coach = await prisma.coach.create({
+    data: { id: newId("coach"), orgId: org.id, name: input.name, email: input.email, passwordHash: input.passwordHash },
+  });
+  return toCoach(coach);
+}
+
+/**
+ * Creates the invited athlete's record up front, in INVITED status — there
+ * is no separate "invite" entity; the Athlete row itself carries the
+ * pending token until accepted (or revoked). This mirrors the flat style
+ * of the rest of this file more than a fully normalized invites table
+ * would, at the cost of losing history for revoked/expired invites.
+ */
+export async function createAthleteInvite(input: {
+  orgId: string;
+  coachId: string;
+  name: string;
+  email: string;
+  sports: Sport[];
+}): Promise<Athlete> {
+  await getSeeded();
+  const athlete = await prisma.athlete.create({
+    data: {
+      id: newId("ath"),
+      orgId: input.orgId,
+      coachId: input.coachId,
+      name: input.name,
+      email: input.email,
+      sports: input.sports,
+      status: "INVITED",
+      inviteToken: generateInviteToken(),
+      inviteExpiresAt: new Date(Date.now() + INVITE_TTL_MS),
+    },
+  });
+  return toAthlete(athlete);
+}
+
+/** Invites this coach has sent that are still awaiting acceptance. */
+export async function getPendingInvites(coachId: string): Promise<Athlete[]> {
+  await getSeeded();
+  const rows = await prisma.athlete.findMany({ where: { coachId, status: "INVITED" } });
+  return rows.map(toAthlete);
+}
+
+/** Cancels a pending invite. Only the inviting coach can revoke it; a no-op otherwise. */
+export async function revokeInvite(athleteId: string, coachId: string): Promise<boolean> {
+  await getSeeded();
+  const result = await prisma.athlete.deleteMany({ where: { id: athleteId, coachId, status: "INVITED" } });
+  return result.count > 0;
+}
+
+/** Looks up a pending, unexpired invite by its token — used by the public accept-invite page. */
+export async function getAthleteByInviteToken(token: string): Promise<Athlete | undefined> {
+  await getSeeded();
+  const athlete = await prisma.athlete.findFirst({
+    where: { inviteToken: token, status: "INVITED", inviteExpiresAt: { gt: new Date() } },
+  });
+  return athlete ? toAthlete(athlete) : undefined;
+}
+
+/** Activates an invited athlete's account with the password and profile info they just set. */
+export async function acceptAthleteInvite(input: {
+  token: string;
+  passwordHash: string;
+  birthDate: string;
+  sex: Sex;
+}): Promise<Athlete> {
+  await getSeeded();
+  const existing = await getAthleteByInviteToken(input.token);
+  if (!existing) throw new Error("convite inválido ou expirado");
+  const athlete = await prisma.athlete.update({
+    where: { id: existing.id },
+    data: {
+      status: "ACTIVE",
+      passwordHash: input.passwordHash,
+      birthDate: new Date(input.birthDate),
+      sex: input.sex,
+      inviteToken: null,
+      inviteExpiresAt: null,
+    },
+  });
+  return toAthlete(athlete);
+}
 
 // ---- Read API (roster, athlete detail) --------------------------------
 
-export function getOrg(): Org {
-  return org;
+export async function getAthlete(athleteId: string): Promise<Athlete | undefined> {
+  await getSeeded();
+  const athlete = await prisma.athlete.findUnique({ where: { id: athleteId } });
+  return athlete ? toAthlete(athlete) : undefined;
 }
 
-export function getCoach(): Coach {
-  return coach;
+export async function getAthleteActivities(athleteId: string): Promise<Activity[]> {
+  await getSeeded();
+  const rows = await prisma.activity.findMany({
+    where: { athleteId },
+    include: { sessionReport: true },
+    orderBy: { startedAt: "desc" },
+  });
+  return rows.map((a) => toActivity(a, a.sessionReport != null));
 }
 
-export function listAthletes(): Athlete[] {
-  return athletes;
+export async function getLatestUnreportedActivity(athleteId: string): Promise<Activity | undefined> {
+  await getSeeded();
+  const row = await prisma.activity.findFirst({
+    where: { athleteId, sessionReport: { is: null } },
+    orderBy: { startedAt: "desc" },
+  });
+  return row ? toActivity(row, false) : undefined;
 }
 
-export function getAthlete(athleteId: string): Athlete | undefined {
-  return athletes.find((a) => a.id === athleteId);
+export interface ActivityFeedItem extends Activity {
+  /** RPE from the linked session report, once the athlete has checked in. */
+  rpe: number | null;
 }
 
-export function getAthleteActivities(athleteId: string): Activity[] {
-  return activities
-    .filter((a) => a.athleteId === athleteId)
-    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+/** Recent activities for an athlete, most recent first, joined with their RPE if reported. */
+export async function getAthleteActivityFeed(athleteId: string, limit = 10): Promise<ActivityFeedItem[]> {
+  await getSeeded();
+  const rows = await prisma.activity.findMany({
+    where: { athleteId },
+    include: { sessionReport: true },
+    orderBy: { startedAt: "desc" },
+    take: limit,
+  });
+  return rows.map((a) => ({ ...toActivity(a, a.sessionReport != null), rpe: a.sessionReport?.rpe ?? null }));
 }
 
-export function getLatestUnreportedActivity(athleteId: string): Activity | undefined {
-  return getAthleteActivities(athleteId).find((a) => !a.hasSessionReport);
+export interface ExportRow {
+  date: string;
+  source: Activity["source"];
+  durationMin: number;
+  distanceKm: number | null;
+  avgHr: number | null;
+  rpe: number | null;
+  internalLoad: number | null;
+  externalLoad: number | null;
+  combinedLoad: number | null;
 }
 
-export function getAthleteLoadSummary(athleteId: string): AthleteLoadSummary {
-  const athlete = getAthlete(athleteId);
+/** An athlete's full activity + load history, oldest first — the CSV/PDF export's source data. */
+export async function getAthleteExportRows(athleteId: string): Promise<ExportRow[]> {
+  await getSeeded();
+  const rows = await prisma.activity.findMany({
+    where: { athleteId },
+    include: { sessionReport: true },
+    orderBy: { startedAt: "asc" },
+  });
+  return rows.map((activity) => {
+    const rpe = activity.sessionReport?.rpe ?? null;
+    const hrZones = activity.hrZones as HrZoneMinutes | null;
+    const external = hrZones ? externalLoadFromHrZones(hrZones) : null;
+    const internal = rpe != null ? internalLoad(rpe, activity.durationMin) : null;
+    return {
+      date: activity.startedAt.toISOString(),
+      source: activity.source,
+      durationMin: activity.durationMin,
+      distanceKm: activity.distanceKm ?? null,
+      avgHr: activity.avgHr ?? null,
+      rpe,
+      internalLoad: internal,
+      externalLoad: external,
+      combinedLoad: internal != null ? combinedLoad(internal, external ?? undefined) : null,
+    };
+  });
+}
+
+function dayKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+// Wider than ewmaAcwr's 28-day chronic window so a full chronic window is
+// always available once an athlete has that much real history; padded with
+// zeros (rest days) for anyone newer than that, same as the old in-memory
+// seed did for its first days.
+const LOAD_SERIES_DAYS = 35;
+
+/**
+ * Daily combined load, oldest first, one entry per calendar day (0 for rest
+ * days), for the last `days` days up to and including today. Computed
+ * fresh from Activity + SessionReport every call — see the module doc
+ * comment for why there's no stored running total anymore.
+ */
+async function getDailyLoadsSeries(athleteId: string, days: number): Promise<number[]> {
+  const since = daysAgoDate(days - 1);
+  since.setUTCHours(0, 0, 0, 0);
+  const rows = await prisma.activity.findMany({
+    where: { athleteId, startedAt: { gte: since } },
+    include: { sessionReport: true },
+  });
+
+  const byDay = new Map<string, number>();
+  for (const activity of rows) {
+    if (!activity.sessionReport) continue; // unreported activities carry no RPE yet — no load to add
+    const internal = internalLoad(activity.sessionReport.rpe, activity.durationMin);
+    const hrZones = activity.hrZones as HrZoneMinutes | null;
+    const external = hrZones ? externalLoadFromHrZones(hrZones) : undefined;
+    const key = dayKey(activity.startedAt);
+    byDay.set(key, (byDay.get(key) ?? 0) + combinedLoad(internal, external));
+  }
+
+  const series: number[] = [];
+  const cursor = new Date(since);
+  for (let i = 0; i < days; i++) {
+    series.push(byDay.get(dayKey(cursor)) ?? 0);
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return series;
+}
+
+export async function getAthleteLoadSummary(athleteId: string): Promise<AthleteLoadSummary> {
+  await getSeeded();
+  const athlete = await getAthlete(athleteId);
   if (!athlete) throw new Error(`unknown athlete ${athleteId}`);
-  const loads = loadsByAthlete.get(athleteId) ?? [];
-  const acwr = loads.length ? ewmaAcwr(loads) : null;
+
+  const [loads, latestActivity] = await Promise.all([
+    getDailyLoadsSeries(athleteId, LOAD_SERIES_DAYS),
+    prisma.activity.findFirst({ where: { athleteId }, orderBy: { startedAt: "desc" } }),
+  ]);
+  const acwr = ewmaAcwr(loads);
   const last7 = loads.slice(-7);
-  const activitiesForAthlete = getAthleteActivities(athleteId);
+  // Foster monotony/strain are computed over the same 7-day window as
+  // weeklyLoad, and both need at least one non-zero day to be meaningful.
+  const hasRecentLoad = last7.some((l) => l > 0);
   return {
     athleteId,
     name: athlete.name,
-    sport: athlete.sport,
+    sports: athlete.sports,
     acwr,
     zone: acwr == null ? null : classifyAcwr(acwr),
     weeklyLoad: Math.round(last7.reduce((a, b) => a + b, 0)),
     last7Days: last7,
-    lastSyncedAt: activitiesForAthlete[0]?.startedAt ?? null,
+    monotony: hasRecentLoad ? monotony(last7) : null,
+    strain: hasRecentLoad ? strain(last7) : null,
+    lastSyncedAt: latestActivity ? latestActivity.startedAt.toISOString() : null,
     hasWearable: athlete.hasWearable,
   };
 }
 
-export function getRoster(): AthleteLoadSummary[] {
-  return athletes.map((a) => getAthleteLoadSummary(a.id));
+/** Active athletes on this coach's roster. Pending invites are listed separately — see getPendingInvites. */
+export async function getRoster(coachId: string): Promise<AthleteLoadSummary[]> {
+  await getSeeded();
+  const rows = await prisma.athlete.findMany({ where: { coachId, status: "ACTIVE" } });
+  return Promise.all(rows.map((a) => getAthleteLoadSummary(a.id)));
 }
 
-export function getWellnessHistory(athleteId: string, days = 7): WellnessCheckin[] {
-  return wellnessCheckins
-    .filter((w) => w.athleteId === athleteId)
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, days);
+export async function getWellnessHistory(athleteId: string, days = 7): Promise<WellnessCheckin[]> {
+  await getSeeded();
+  const rows = await prisma.wellnessCheckin.findMany({
+    where: { athleteId },
+    orderBy: { date: "desc" },
+    take: days,
+  });
+  return rows.map(toWellnessCheckin);
 }
 
 // ---- Write API (check-in flow, manual entry) ---------------------------
 
-export function addManualActivity(input: {
+export async function addManualActivity(input: {
   athleteId: string;
   durationMin: number;
   distanceKm?: number;
   startedAt?: string;
-}): Activity {
-  const activity: Activity = {
-    id: id("act"),
-    athleteId: input.athleteId,
-    source: "MANUAL",
-    startedAt: input.startedAt ?? new Date().toISOString(),
-    durationMin: input.durationMin,
-    distanceKm: input.distanceKm,
-    hasSessionReport: false,
-  };
-  activities.unshift(activity);
-  return activity;
+}): Promise<Activity> {
+  await getSeeded();
+  const activity = await prisma.activity.create({
+    data: {
+      id: newId("act"),
+      athleteId: input.athleteId,
+      source: "MANUAL",
+      startedAt: input.startedAt ? new Date(input.startedAt) : new Date(),
+      durationMin: input.durationMin,
+      distanceKm: input.distanceKm,
+    },
+  });
+  return toActivity(activity, false);
 }
 
-export function submitCheckin(input: {
+export async function submitCheckin(input: {
   athleteId: string;
   activityId: string;
   rpe: number;
@@ -291,62 +970,400 @@ export function submitCheckin(input: {
   soreness: number;
   mood: number;
   stress: number;
-}): { sessionReport: SessionReport; wellnessCheckin: WellnessCheckin } {
-  const activity = activities.find((a) => a.id === input.activityId);
+  hydration: number;
+}): Promise<{ sessionReport: SessionReport; wellnessCheckin: WellnessCheckin }> {
+  await getSeeded();
+  const activity = await prisma.activity.findUnique({ where: { id: input.activityId } });
   if (!activity || activity.athleteId !== input.athleteId) {
     throw new Error("activity not found for this athlete");
   }
-  const sessionReport: SessionReport = {
-    id: id("sr"),
-    athleteId: input.athleteId,
-    activityId: input.activityId,
-    rpe: input.rpe,
-    createdAt: new Date().toISOString(),
-  };
-  sessionReports.push(sessionReport);
-  activity.hasSessionReport = true;
 
-  const wellnessCheckin: WellnessCheckin = {
-    id: id("wc"),
-    athleteId: input.athleteId,
-    date: new Date().toISOString(),
-    sleep: input.sleep,
-    soreness: input.soreness,
-    mood: input.mood,
-    stress: input.stress,
-  };
-  wellnessCheckins.push(wellnessCheckin);
+  const [sessionReport, wellnessCheckin] = await prisma.$transaction([
+    prisma.sessionReport.create({
+      data: { id: newId("sr"), athleteId: input.athleteId, activityId: input.activityId, rpe: input.rpe },
+    }),
+    prisma.wellnessCheckin.create({
+      data: {
+        id: newId("wc"),
+        athleteId: input.athleteId,
+        sleep: input.sleep,
+        soreness: input.soreness,
+        mood: input.mood,
+        stress: input.stress,
+        hydration: input.hydration,
+      },
+    }),
+  ]);
 
-  // Fold the new day's load into this athlete's history so the dashboard
-  // and progress view reflect the check-in immediately.
-  const internal = internalLoad(input.rpe, activity.durationMin);
-  const external = activity.hrZones ? externalLoadFromHrZones(activity.hrZones) : undefined;
-  const loads = loadsByAthlete.get(input.athleteId) ?? [];
-  loads.push(combinedLoad(internal, external));
-  loadsByAthlete.set(input.athleteId, loads);
-
-  return { sessionReport, wellnessCheckin };
+  return { sessionReport: toSessionReport(sessionReport), wellnessCheckin: toWellnessCheckin(wellnessCheckin) };
 }
 
-export function addPainReport(input: {
+export async function addPainReport(input: {
   athleteId: string;
-  bodyPart: string;
+  bodyPart: BodyPart;
   intensity: number;
   note?: string;
-}): PainReport {
-  const report: PainReport = {
-    id: id("pr"),
-    athleteId: input.athleteId,
-    bodyPart: input.bodyPart,
-    intensity: input.intensity,
-    note: input.note,
-    createdAt: new Date().toISOString(),
-  };
-  painReports.push(report);
-  return report;
+}): Promise<PainReport> {
+  await getSeeded();
+  const report = await prisma.painReport.create({
+    data: {
+      id: newId("pr"),
+      athleteId: input.athleteId,
+      bodyPart: input.bodyPart,
+      intensity: input.intensity,
+      note: input.note,
+    },
+  });
+  return toPainReport(report);
 }
 
-/** The athlete used by the check-in/progress pages until real auth exists. */
-export function getDemoAthleteId(): string {
-  return athletes[0].id;
+/** An athlete's own pain reports, most recent first. */
+export async function getAthletePainReports(athleteId: string, limit = 10): Promise<PainReport[]> {
+  await getSeeded();
+  const rows = await prisma.painReport.findMany({
+    where: { athleteId },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+  return rows.map(toPainReport);
+}
+
+export interface RosterPainReport extends PainReport {
+  athleteName: string;
+}
+
+/** Pain reports across a coach's whole roster, most recent first — the "pain map review". */
+export async function getPainReportsForCoach(coachId: string, limit = 20): Promise<RosterPainReport[]> {
+  await getSeeded();
+  const rows = await prisma.painReport.findMany({
+    where: { athlete: { coachId } },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    include: { athlete: { select: { name: true } } },
+  });
+  return rows.map((p) => ({ ...toPainReport(p), athleteName: p.athlete.name }));
+}
+
+// Cycle logs are personal health data an athlete tracks for themselves —
+// unlike pain reports, there's deliberately no coach-facing rollup of these.
+
+export async function addCycleLog(input: {
+  athleteId: string;
+  date?: string;
+  flow: CycleLog["flow"];
+  symptoms: CycleLog["symptoms"];
+  phase: CycleLog["phase"];
+}): Promise<CycleLog> {
+  await getSeeded();
+  const log = await prisma.cycleLog.create({
+    data: {
+      id: newId("cl"),
+      athleteId: input.athleteId,
+      date: input.date ? new Date(input.date) : new Date(),
+      flow: input.flow,
+      symptoms: input.symptoms,
+      phase: input.phase,
+    },
+  });
+  return toCycleLog(log);
+}
+
+/** An athlete's own cycle logs, most recent first. */
+export async function getAthleteCycleLogs(athleteId: string, limit = 10): Promise<CycleLog[]> {
+  await getSeeded();
+  const rows = await prisma.cycleLog.findMany({
+    where: { athleteId },
+    orderBy: { date: "desc" },
+    take: limit,
+  });
+  return rows.map(toCycleLog);
+}
+
+// ---- Assessments (physio-style intake/reassessment records) -----------
+// Recorded by the professional (coach today — there's no separate physio
+// login yet, see prisma/schema.prisma's Role enum), not self-reported by
+// the athlete, so these always require getSessionCoach()-style
+// authorization at the route level, same as invites/roster.
+
+export async function addAssessment(input: {
+  athleteId: string;
+  coachId: string;
+  kind: AssessmentKind;
+  date?: string;
+  examsNote?: string;
+  medicationsNote?: string;
+  generalNote?: string;
+  measurements: Array<{
+    category: MeasurementCategory;
+    label: string;
+    value?: number | null;
+    unit?: string | null;
+    note?: string;
+  }>;
+}): Promise<Assessment> {
+  await getSeeded();
+  const assessment = await prisma.assessment.create({
+    data: {
+      id: newId("asmt"),
+      athleteId: input.athleteId,
+      coachId: input.coachId,
+      kind: input.kind,
+      date: input.date ? new Date(input.date) : new Date(),
+      examsNote: input.examsNote,
+      medicationsNote: input.medicationsNote,
+      generalNote: input.generalNote,
+      measurements: {
+        create: input.measurements.map((m) => ({
+          id: newId("meas"),
+          category: m.category,
+          label: m.label,
+          value: m.value ?? null,
+          unit: m.unit ?? null,
+          note: m.note,
+        })),
+      },
+    },
+    include: { measurements: true },
+  });
+  return toAssessment(assessment);
+}
+
+/** An athlete's assessments (initial + follow-ups), most recent first. */
+export async function getAthleteAssessments(athleteId: string, limit = 20): Promise<Assessment[]> {
+  await getSeeded();
+  const rows = await prisma.assessment.findMany({
+    where: { athleteId },
+    orderBy: { date: "desc" },
+    take: limit,
+    include: { measurements: true },
+  });
+  return rows.map(toAssessment);
+}
+
+// ---- Exercise library, prescriptions & completions ---------------------
+// Feedback from a physiotherapist in the field: "controle de carga no
+// mesmo app de exercícios de aquecimento ou fortalecimento específico,
+// preventivo". The library is global (not per-Org) — exercise content
+// itself isn't client-specific — but prescriptions are always scoped to
+// one athlete + the coach who prescribed them.
+
+/** The shared exercise library, grouped by category then name. */
+export async function getExerciseLibrary(): Promise<Exercise[]> {
+  await getSeeded();
+  const rows = await prisma.exercise.findMany({ orderBy: [{ category: "asc" }, { name: "asc" }] });
+  return rows.map(toExercise);
+}
+
+/** Adds a coach-authored entry to the shared library — never a fabricated video URL, only what the coach pastes in. */
+export async function addExercise(input: {
+  name: string;
+  category: ExerciseCategory;
+  instructions?: string;
+  videoUrl?: string;
+}): Promise<Exercise> {
+  await getSeeded();
+  const exercise = await prisma.exercise.create({
+    data: {
+      id: newId("ex"),
+      name: input.name,
+      category: input.category,
+      instructions: input.instructions,
+      videoUrl: input.videoUrl,
+    },
+  });
+  return toExercise(exercise);
+}
+
+export async function prescribeExercise(input: {
+  athleteId: string;
+  coachId: string;
+  exerciseId: string;
+  sets?: number;
+  reps?: number;
+  frequency?: string;
+  notes?: string;
+}): Promise<ExercisePrescription> {
+  await getSeeded();
+  const prescription = await prisma.exercisePrescription.create({
+    data: {
+      id: newId("rx"),
+      athleteId: input.athleteId,
+      coachId: input.coachId,
+      exerciseId: input.exerciseId,
+      sets: input.sets ?? null,
+      reps: input.reps ?? null,
+      frequency: input.frequency,
+      notes: input.notes,
+    },
+    include: { exercise: true },
+  });
+  // Just created: no completions exist for it yet.
+  return toExercisePrescription(prescription, false, 0);
+}
+
+/**
+ * An athlete's prescriptions, joined with the exercise and a 7-day
+ * adherence signal (`doneToday`, `completedLast7Days`) computed fresh from
+ * ExerciseCompletion — same "recompute on read, never store a running
+ * total" approach as the load summary elsewhere in this file.
+ */
+export async function getAthletePrescriptions(athleteId: string, activeOnly = true): Promise<ExercisePrescription[]> {
+  await getSeeded();
+  const prescriptions = await prisma.exercisePrescription.findMany({
+    where: activeOnly ? { athleteId, active: true } : { athleteId },
+    include: { exercise: true },
+    orderBy: { createdAt: "asc" },
+  });
+  if (prescriptions.length === 0) return [];
+
+  const since = daysAgoDate(6); // today + 6 days back = last 7 calendar days
+  since.setUTCHours(0, 0, 0, 0);
+  const completions = await prisma.exerciseCompletion.findMany({
+    where: { prescriptionId: { in: prescriptions.map((p) => p.id) }, date: { gte: since } },
+  });
+  const todayKey = dayKey(daysAgoDate(0));
+  const daysByPrescription = new Map<string, Set<string>>();
+  for (const c of completions) {
+    const set = daysByPrescription.get(c.prescriptionId) ?? new Set<string>();
+    set.add(dayKey(c.date));
+    daysByPrescription.set(c.prescriptionId, set);
+  }
+
+  return prescriptions.map((p) => {
+    const days = daysByPrescription.get(p.id) ?? new Set<string>();
+    return toExercisePrescription(p, days.has(todayKey), days.size);
+  });
+}
+
+/** Coach-only: stops a prescription from showing up as active for the athlete. Only the prescribing coach can. */
+export async function deactivatePrescription(prescriptionId: string, coachId: string): Promise<boolean> {
+  await getSeeded();
+  const result = await prisma.exercisePrescription.updateMany({
+    where: { id: prescriptionId, coachId },
+    data: { active: false },
+  });
+  return result.count > 0;
+}
+
+/** Athlete-only: toggles today's "done" mark for one of their own prescriptions. */
+export async function setExerciseCompletion(input: {
+  prescriptionId: string;
+  athleteId: string;
+  done: boolean;
+}): Promise<void> {
+  await getSeeded();
+  const prescription = await prisma.exercisePrescription.findUnique({ where: { id: input.prescriptionId } });
+  if (!prescription || prescription.athleteId !== input.athleteId) {
+    throw new Error("prescription not found for this athlete");
+  }
+  const today = daysAgoDate(0);
+  if (input.done) {
+    await prisma.exerciseCompletion.upsert({
+      where: { prescriptionId_date: { prescriptionId: input.prescriptionId, date: today } },
+      create: { id: newId("exc"), prescriptionId: input.prescriptionId, date: today },
+      update: {},
+    });
+  } else {
+    await prisma.exerciseCompletion.deleteMany({ where: { prescriptionId: input.prescriptionId, date: today } });
+  }
+}
+
+// ---- ExerciseDB import (real third-party exercise media) ---------------
+// The one real external-API integration on the library — everything else
+// in it is coach-typed. Needs EXERCISEDB_API_KEY (a RapidAPI key for
+// https://rapidapi.com/justin-WFnsXH_t6/api/exercisedb), which this app
+// doesn't ship with — a coach/admin sets it in Vercel's env vars, never in
+// chat. This sandbox's network policy blocks both rapidapi.com and
+// exercisedb.p.rapidapi.com (confirmed: CONNECT rejected), so this was
+// written from documented API shape, not a live response, and could not be
+// exercised here at all — parsing is deliberately defensive (skip anything
+// that doesn't look right rather than throw) and its first real run is
+// whatever a coach triggers on the live deploy. Report back here if the
+// response shape turns out to differ from what's assumed below.
+
+const EXERCISEDB_BASE_URL = "https://exercisedb.p.rapidapi.com";
+const EXERCISEDB_HOST = "exercisedb.p.rapidapi.com";
+
+export interface ParsedExerciseDbEntry {
+  externalId: string;
+  name: string;
+  instructions?: string;
+  videoUrl?: string;
+}
+
+/**
+ * Exported (unlike this file's other internal mappers) specifically so it
+ * can be unit-tested without a database — this is the one piece of the
+ * ExerciseDB import that's pure and can actually run in a sandbox that
+ * can't reach the real API. See data.test.ts.
+ */
+export function parseExerciseDbEntry(raw: unknown): ParsedExerciseDbEntry | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const externalId = typeof r.id === "string" ? r.id : typeof r.id === "number" ? String(r.id) : null;
+  const name = typeof r.name === "string" ? r.name.trim() : "";
+  if (!externalId || !name) return null;
+  const instructions = Array.isArray(r.instructions)
+    ? r.instructions.filter((s): s is string => typeof s === "string").join(" ")
+    : undefined;
+  // ExerciseDB's media is an animated GIF, not a video file — it's still
+  // stored in videoUrl (the field predates this integration) since it
+  // serves the same purpose: showing the movement, not just naming it.
+  const videoUrl = typeof r.gifUrl === "string" ? r.gifUrl : undefined;
+  return { externalId, name, instructions, videoUrl };
+}
+
+/**
+ * Bulk-imports exercises from ExerciseDB into the shared library. A
+ * deliberate coach/admin action (a button, not part of ensureSeeded) since
+ * it's a real, rate-limited call against someone's paid/keyed API
+ * subscription, not something that should fire on every cold start.
+ * Already-imported exercises (matched by source + externalId) are
+ * skipped, so running this again just tops up whatever's new.
+ */
+export async function importExercisesFromExerciseDb(limit = 50): Promise<{ imported: number; skipped: number }> {
+  const apiKey = process.env.EXERCISEDB_API_KEY;
+  if (!apiKey) throw new Error("EXERCISEDB_API_KEY não configurada no ambiente.");
+  await getSeeded();
+
+  const res = await fetch(`${EXERCISEDB_BASE_URL}/exercises?limit=${limit}`, {
+    headers: { "X-RapidAPI-Key": apiKey, "X-RapidAPI-Host": EXERCISEDB_HOST },
+  });
+  if (!res.ok) throw new Error(`ExerciseDB respondeu ${res.status}`);
+  const body: unknown = await res.json();
+  if (!Array.isArray(body)) throw new Error("Resposta inesperada da ExerciseDB (esperava uma lista).");
+
+  const existing = await prisma.exercise.findMany({
+    where: { source: "EXERCISEDB" },
+    select: { externalId: true },
+  });
+  const knownIds = new Set(existing.map((e) => e.externalId));
+
+  const toCreate: Prisma.ExerciseCreateManyInput[] = [];
+  let skipped = 0;
+  for (const raw of body) {
+    const parsed = parseExerciseDbEntry(raw);
+    if (!parsed || knownIds.has(parsed.externalId)) {
+      skipped++;
+      continue;
+    }
+    toCreate.push({
+      id: newId("ex"),
+      name: parsed.name,
+      // ExerciseDB has no warm-up/strengthening/mobility taxonomy of its
+      // own (it categorizes by body part/target muscle instead) — every
+      // import lands as STRENGTHENING, the closest fit for a resistance-
+      // exercise database; a coach can recategorize individual entries later.
+      category: "STRENGTHENING",
+      instructions: parsed.instructions,
+      videoUrl: parsed.videoUrl,
+      source: "EXERCISEDB",
+      externalId: parsed.externalId,
+    });
+    knownIds.add(parsed.externalId);
+  }
+  if (toCreate.length > 0) {
+    await prisma.exercise.createMany({ data: toCreate, skipDuplicates: true });
+  }
+  return { imported: toCreate.length, skipped };
 }

@@ -1,11 +1,11 @@
 // Carga — data model (Phase 1 MVP)
-// NOTE: This schema is the source of truth for the production data model.
-// `prisma generate` needs outbound access to binaries.prisma.sh to fetch the
-// query engine, which this sandbox's egress policy blocks — so the app
-// currently runs against an in-memory data layer (see src/lib/data.ts) that
-// mirrors these shapes. Point DATABASE_URL at a real Postgres instance and
-// run `npx prisma generate && npx prisma migrate dev` in an environment with
-// normal network access to switch over.
+// NOTE: This schema is the real, live data model — src/lib/data.ts queries
+// it directly via @prisma/client. There is no in-memory fallback anymore.
+// No migration has ever been generated (`prisma migrate dev` needs a live
+// connection this sandbox can't make — raw TCP to Postgres is blocked by
+// its egress policy); instead `npm run build` runs `prisma db push` against
+// PRISMA_DATABASE_URL, which Vercel's build environment (real network
+// access) can reach. See README.md for how this was verified.
 
 generator client {
   provider = "prisma-client-js"
@@ -13,7 +13,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("PRISMA_DATABASE_URL")
 }
 
 enum Role {
@@ -45,16 +45,78 @@ enum AcwrZone {
   RISK
 }
 
+// ACTIVE once the athlete has followed their invite link and set a
+// password; INVITED from the moment a coach sends the invite until then.
+enum AthleteStatus {
+  INVITED
+  ACTIVE
+}
+
+// Self-reported at invite acceptance; used for RPE/ACWR norms and cycle-log
+// eligibility, never inferred.
+enum Sex {
+  FEMALE
+  MALE
+  UNSPECIFIED
+}
+
+// INITIAL is the intake exam when an athlete first joins; every check
+// after that is a FOLLOW_UP, compared against the initial (and each other)
+// by matching Measurement.label across assessments.
+enum AssessmentKind {
+  INITIAL
+  FOLLOW_UP
+}
+
+enum MeasurementCategory {
+  ROM // amplitude de movimento
+  STRENGTH // força
+  MOVEMENT_QUALITY // qualidade de movimento
+}
+
+enum ExerciseCategory {
+  WARM_UP // aquecimento
+  STRENGTHENING // fortalecimento específico, preventivo
+  MOBILITY // mobilidade
+}
+
+// Body regions selectable on the pain map (front-view hotspots, plus two
+// "not visible from the front" chips for the back).
+enum BodyPart {
+  HEAD
+  NECK
+  SHOULDER_L
+  SHOULDER_R
+  CHEST
+  ABDOMEN
+  ARM_L
+  ARM_R
+  HIP_L
+  HIP_R
+  THIGH_L
+  THIGH_R
+  KNEE_L
+  KNEE_R
+  LOWER_LEG_L
+  LOWER_LEG_R
+  UPPER_BACK
+  LOWER_BACK
+}
+
 model Org {
   id        String   @id @default(cuid())
   name      String
   createdAt DateTime @default(now())
 
+  coaches  Coach[]
   members  Membership[]
   athletes Athlete[]
   alerts   AlertRule[]
 }
 
+// Kept for the richer future RBAC in the Role enum (assistant coaches,
+// physios, org admins on the same org) — not used by the credentials login
+// below, which is 1 Coach account : 1 Org, created at signup.
 model Membership {
   id     String @id @default(cuid())
   userId String
@@ -66,34 +128,58 @@ model Membership {
   @@unique([userId, orgId])
 }
 
+// Coach signup creates both the Org and the Coach account together
+// (orgName + name + email + password) — there's no separate User/identity
+// table; passwordHash lives directly on Coach.
 model Coach {
-  id     String @id @default(cuid())
-  userId String @unique
-  name   String
-  email  String @unique
+  id           String @id @default(cuid())
+  orgId        String
+  name         String
+  email        String @unique
+  passwordHash String
 
-  athletes Athlete[]
+  org                   Org                    @relation(fields: [orgId], references: [id])
+  athletes              Athlete[]
+  assessments           Assessment[]
+  exercisePrescriptions ExercisePrescription[]
 }
 
 model Athlete {
-  id        String   @id @default(cuid())
-  userId    String   @unique
+  id        String        @id @default(cuid())
   orgId     String
-  coachId   String?
+  coachId   String
   name      String
-  email     String   @unique
-  sport     Sport
-  createdAt DateTime @default(now())
+  email     String        @unique
+  sports    Sport[]
+  status    AthleteStatus @default(INVITED)
+  createdAt DateTime      @default(now())
 
-  org   Org    @relation(fields: [orgId], references: [id])
-  coach Coach? @relation(fields: [coachId], references: [id])
+  // Self-reported at invite acceptance; null/UNSPECIFIED while INVITED.
+  birthDate DateTime?
+  sex       Sex       @default(UNSPECIFIED)
 
-  activities       Activity[]
-  sessionReports   SessionReport[]
-  wellnessCheckins WellnessCheckin[]
-  painReports      PainReport[]
-  cycleLogs        CycleLog[]
-  loadSnapshots    LoadSnapshot[]
+  // true once the athlete has connected a wearable (Strava, at launch).
+  // No real Strava OAuth exists yet (see docs/mvp-tasks.md) — this only
+  // ever gets set by seed data today, but the field is real so the athlete
+  // app and coach dashboard have something to read once OAuth lands.
+  hasWearable Boolean @default(false)
+
+  // Set once the invite is accepted; null while status is INVITED.
+  passwordHash    String?
+  inviteToken     String?   @unique
+  inviteExpiresAt DateTime?
+
+  org   Org   @relation(fields: [orgId], references: [id])
+  coach Coach @relation(fields: [coachId], references: [id])
+
+  activities            Activity[]
+  sessionReports        SessionReport[]
+  wellnessCheckins      WellnessCheckin[]
+  painReports           PainReport[]
+  cycleLogs             CycleLog[]
+  loadSnapshots         LoadSnapshot[]
+  assessments           Assessment[]
+  exercisePrescriptions ExercisePrescription[]
 }
 
 model Activity {
@@ -134,7 +220,7 @@ model WellnessCheckin {
   soreness  Int // 1–5
   mood      Int // 1–5
   stress    Int // 1–5
-  hydration Int? // 1–5
+  hydration Int // 1–5
 
   athlete Athlete @relation(fields: [athleteId], references: [id])
 
@@ -144,7 +230,7 @@ model WellnessCheckin {
 model PainReport {
   id        String   @id @default(cuid())
   athleteId String
-  bodyPart  String
+  bodyPart  BodyPart
   intensity Int // 1–10
   note      String?
   createdAt DateTime @default(now())
@@ -163,19 +249,118 @@ model CycleLog {
   athlete Athlete @relation(fields: [athleteId], references: [id])
 }
 
+// Physio-style intake/reassessment record — feedback from a physiotherapist
+// in the field ("espaço para informações de avaliação inicial e medidas de
+// acompanhamento das reavaliações"). Kept separate from PainReport: this is
+// a structured, professional-recorded exam, not something an athlete
+// self-reports. examsNote/medicationsNote are free text for now — actual
+// file attachments (exam PDFs, etc.) need a blob-storage decision this app
+// doesn't have yet, so that part isn't built, just described in the field.
+model Assessment {
+  id              String         @id @default(cuid())
+  athleteId       String
+  coachId         String
+  kind            AssessmentKind
+  date            DateTime       @default(now())
+  examsNote       String? // exames relatados/anexados — texto por enquanto, sem upload de arquivo
+  medicationsNote String?
+  generalNote     String?
+  createdAt       DateTime       @default(now())
+
+  athlete      Athlete       @relation(fields: [athleteId], references: [id])
+  coach        Coach         @relation(fields: [coachId], references: [id])
+  measurements Measurement[]
+}
+
+// One named measurement within an assessment (e.g. "Flexão de joelho D",
+// 120, "graus", category ROM). Free-form label + optional numeric value
+// rather than a fixed joint/muscle taxonomy, so a physio can track whatever
+// they actually measure; reassessments are compared by matching `label`
+// against the athlete's previous assessments.
+model Measurement {
+  id           String              @id @default(cuid())
+  assessmentId String
+  category     MeasurementCategory
+  label        String
+  value        Float?
+  unit         String?
+  note         String?
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id])
+}
+
+// Shared exercise library — not scoped to an Org, since exercise content
+// itself (name, category, how to do it) isn't client-specific. Feedback
+// from a physiotherapist in the field: "controle de carga no mesmo app de
+// exercícios de aquecimento ou fortalecimento específico, preventivo".
+// `source`/`externalId` exist so a real third-party exercise API (wger,
+// ExerciseDB, ...) can be plugged in as a bulk importer later without a
+// schema change — none is wired up yet (most need an API key this app
+// doesn't have), so today every row's source is "CURATED": a coach typed
+// it in themselves, pasting their own trusted video link if they have one.
+// This app never invents a video URL on a coach's behalf.
+model Exercise {
+  id           String           @id @default(cuid())
+  name         String
+  category     ExerciseCategory
+  instructions String?
+  videoUrl     String?
+  source       String           @default("CURATED")
+  externalId   String?
+  createdAt    DateTime         @default(now())
+
+  prescriptions ExercisePrescription[]
+}
+
+// A coach prescribing one library Exercise to one athlete — sets/reps and
+// frequency are free text (e.g. "3x15", "3x por semana") rather than a
+// structured schedule DSL, matching this app's preference for a simple
+// field over a feature nobody asked for yet.
+model ExercisePrescription {
+  id         String   @id @default(cuid())
+  athleteId  String
+  coachId    String
+  exerciseId String
+  sets       Int?
+  reps       Int?
+  frequency  String?
+  notes      String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  athlete     Athlete              @relation(fields: [athleteId], references: [id])
+  coach       Coach                @relation(fields: [coachId], references: [id])
+  exercise    Exercise             @relation(fields: [exerciseId], references: [id])
+  completions ExerciseCompletion[]
+}
+
+// One "done" mark per prescription per calendar day (date normalized to a
+// fixed time-of-day by the app, same trick as the rest of this schema's
+// seed data) — toggled by the athlete, read by the coach as adherence.
+model ExerciseCompletion {
+  id             String   @id @default(cuid())
+  prescriptionId String
+  date           DateTime
+  createdAt      DateTime @default(now())
+
+  prescription ExercisePrescription @relation(fields: [prescriptionId], references: [id])
+
+  @@unique([prescriptionId, date])
+}
+
 // Precomputed daily load metrics per athlete — written by the metrics
 // engine (src/lib/metrics.ts) whenever a new SessionReport/Activity lands.
 model LoadSnapshot {
-  id             String   @id @default(cuid())
-  athleteId      String
-  date           DateTime
-  internalLoad   Float
-  externalLoad   Float?
-  combinedLoad   Float
-  monotony       Float?
-  strain         Float?
-  acwr           Float?
-  acwrZone       AcwrZone?
+  id           String    @id @default(cuid())
+  athleteId    String
+  date         DateTime
+  internalLoad Float
+  externalLoad Float?
+  combinedLoad Float
+  monotony     Float?
+  strain       Float?
+  acwr         Float?
+  acwrZone     AcwrZone?
 
   athlete Athlete @relation(fields: [athleteId], references: [id])
 
