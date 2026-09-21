@@ -44,6 +44,11 @@ export type CyclePhase = "MENSTRUAL" | "FOLLICULAR" | "OVULATION" | "LUTEAL";
 export const CYCLE_SYMPTOMS = ["CRAMPS", "FATIGUE", "HEADACHE", "BLOATING", "MOOD_SWINGS"] as const;
 export type CycleSymptom = (typeof CYCLE_SYMPTOMS)[number];
 
+/** INITIAL is the intake exam; every check after that is a FOLLOW_UP. */
+export type AssessmentKind = "INITIAL" | "FOLLOW_UP";
+export const MEASUREMENT_CATEGORIES = ["ROM", "STRENGTH", "MOVEMENT_QUALITY"] as const;
+export type MeasurementCategory = (typeof MEASUREMENT_CATEGORIES)[number];
+
 export interface Org {
   id: string;
   name: string;
@@ -126,6 +131,41 @@ export interface CycleLog {
   symptoms: CycleSymptom[];
   /** The athlete's own read on where they are in the cycle; not derived from `flow`. */
   phase: CyclePhase | null;
+}
+
+/**
+ * One named measurement within an Assessment (e.g. "Flexão de joelho D",
+ * 120, "graus"). Free-form label + optional numeric value rather than a
+ * fixed joint/muscle taxonomy, so a physio can track whatever they actually
+ * measure; reassessments are compared by matching `label` across an
+ * athlete's assessments over time.
+ */
+export interface Measurement {
+  id: string;
+  category: MeasurementCategory;
+  label: string;
+  value: number | null;
+  unit: string | null;
+  note?: string;
+}
+
+/**
+ * A physio-style intake or follow-up exam — recorded by the professional,
+ * not self-reported by the athlete (unlike PainReport). File attachments
+ * (exam PDFs, etc.) aren't built yet — examsNote/medicationsNote are free
+ * text until this app has a blob-storage decision to attach real files.
+ */
+export interface Assessment {
+  id: string;
+  athleteId: string;
+  coachId: string;
+  kind: AssessmentKind;
+  date: string; // ISO date
+  examsNote?: string;
+  medicationsNote?: string;
+  generalNote?: string;
+  createdAt: string;
+  measurements: Measurement[];
 }
 
 export interface AthleteLoadSummary {

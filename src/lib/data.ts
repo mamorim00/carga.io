@@ -13,6 +13,8 @@ import {
 import { hashPassword } from "./password";
 import type {
   Activity,
+  Assessment,
+  AssessmentKind,
   AthleteLoadSummary,
   Athlete,
   BodyPart,
@@ -21,6 +23,8 @@ import type {
   CycleLog,
   CyclePhase,
   CycleSymptom,
+  Measurement,
+  MeasurementCategory,
   Org,
   PainReport,
   Sex,
@@ -159,6 +163,34 @@ function toCycleLog(c: Prisma.CycleLogGetPayload<object>): CycleLog {
     flow: (c.flow ?? "NONE") as CycleFlow,
     symptoms: c.symptoms as CycleSymptom[],
     phase: (c.phase as CyclePhase | null) ?? null,
+  };
+}
+
+function toMeasurement(m: Prisma.MeasurementGetPayload<object>): Measurement {
+  return {
+    id: m.id,
+    category: m.category as MeasurementCategory,
+    label: m.label,
+    value: m.value ?? null,
+    unit: m.unit ?? null,
+    note: m.note ?? undefined,
+  };
+}
+
+function toAssessment(
+  a: Prisma.AssessmentGetPayload<{ include: { measurements: true } }>,
+): Assessment {
+  return {
+    id: a.id,
+    athleteId: a.athleteId,
+    coachId: a.coachId,
+    kind: a.kind as AssessmentKind,
+    date: a.date.toISOString(),
+    examsNote: a.examsNote ?? undefined,
+    medicationsNote: a.medicationsNote ?? undefined,
+    generalNote: a.generalNote ?? undefined,
+    createdAt: a.createdAt.toISOString(),
+    measurements: a.measurements.map(toMeasurement),
   };
 }
 
@@ -916,4 +948,65 @@ export async function getAthleteCycleLogs(athleteId: string, limit = 10): Promis
     take: limit,
   });
   return rows.map(toCycleLog);
+}
+
+// ---- Assessments (physio-style intake/reassessment records) -----------
+// Recorded by the professional (coach today — there's no separate physio
+// login yet, see prisma/schema.prisma's Role enum), not self-reported by
+// the athlete, so these always require getSessionCoach()-style
+// authorization at the route level, same as invites/roster.
+
+export async function addAssessment(input: {
+  athleteId: string;
+  coachId: string;
+  kind: AssessmentKind;
+  date?: string;
+  examsNote?: string;
+  medicationsNote?: string;
+  generalNote?: string;
+  measurements: Array<{
+    category: MeasurementCategory;
+    label: string;
+    value?: number | null;
+    unit?: string | null;
+    note?: string;
+  }>;
+}): Promise<Assessment> {
+  await getSeeded();
+  const assessment = await prisma.assessment.create({
+    data: {
+      id: newId("asmt"),
+      athleteId: input.athleteId,
+      coachId: input.coachId,
+      kind: input.kind,
+      date: input.date ? new Date(input.date) : new Date(),
+      examsNote: input.examsNote,
+      medicationsNote: input.medicationsNote,
+      generalNote: input.generalNote,
+      measurements: {
+        create: input.measurements.map((m) => ({
+          id: newId("meas"),
+          category: m.category,
+          label: m.label,
+          value: m.value ?? null,
+          unit: m.unit ?? null,
+          note: m.note,
+        })),
+      },
+    },
+    include: { measurements: true },
+  });
+  return toAssessment(assessment);
+}
+
+/** An athlete's assessments (initial + follow-ups), most recent first. */
+export async function getAthleteAssessments(athleteId: string, limit = 20): Promise<Assessment[]> {
+  await getSeeded();
+  const rows = await prisma.assessment.findMany({
+    where: { athleteId },
+    orderBy: { date: "desc" },
+    take: limit,
+    include: { measurements: true },
+  });
+  return rows.map(toAssessment);
 }

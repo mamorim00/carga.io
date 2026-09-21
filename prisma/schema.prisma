@@ -60,6 +60,20 @@ enum Sex {
   UNSPECIFIED
 }
 
+// INITIAL is the intake exam when an athlete first joins; every check
+// after that is a FOLLOW_UP, compared against the initial (and each other)
+// by matching Measurement.label across assessments.
+enum AssessmentKind {
+  INITIAL
+  FOLLOW_UP
+}
+
+enum MeasurementCategory {
+  ROM // amplitude de movimento
+  STRENGTH // força
+  MOVEMENT_QUALITY // qualidade de movimento
+}
+
 // Body regions selectable on the pain map (front-view hotspots, plus two
 // "not visible from the front" chips for the back).
 enum BodyPart {
@@ -118,8 +132,9 @@ model Coach {
   email        String @unique
   passwordHash String
 
-  org      Org       @relation(fields: [orgId], references: [id])
-  athletes Athlete[]
+  org         Org          @relation(fields: [orgId], references: [id])
+  athletes    Athlete[]
+  assessments Assessment[]
 }
 
 model Athlete {
@@ -156,6 +171,7 @@ model Athlete {
   painReports      PainReport[]
   cycleLogs        CycleLog[]
   loadSnapshots    LoadSnapshot[]
+  assessments      Assessment[]
 }
 
 model Activity {
@@ -225,19 +241,59 @@ model CycleLog {
   athlete Athlete @relation(fields: [athleteId], references: [id])
 }
 
+// Physio-style intake/reassessment record — feedback from a physiotherapist
+// in the field ("espaço para informações de avaliação inicial e medidas de
+// acompanhamento das reavaliações"). Kept separate from PainReport: this is
+// a structured, professional-recorded exam, not something an athlete
+// self-reports. examsNote/medicationsNote are free text for now — actual
+// file attachments (exam PDFs, etc.) need a blob-storage decision this app
+// doesn't have yet, so that part isn't built, just described in the field.
+model Assessment {
+  id              String         @id @default(cuid())
+  athleteId       String
+  coachId         String
+  kind            AssessmentKind
+  date            DateTime       @default(now())
+  examsNote       String? // exames relatados/anexados — texto por enquanto, sem upload de arquivo
+  medicationsNote String?
+  generalNote     String?
+  createdAt       DateTime       @default(now())
+
+  athlete      Athlete       @relation(fields: [athleteId], references: [id])
+  coach        Coach         @relation(fields: [coachId], references: [id])
+  measurements Measurement[]
+}
+
+// One named measurement within an assessment (e.g. "Flexão de joelho D",
+// 120, "graus", category ROM). Free-form label + optional numeric value
+// rather than a fixed joint/muscle taxonomy, so a physio can track whatever
+// they actually measure; reassessments are compared by matching `label`
+// against the athlete's previous assessments.
+model Measurement {
+  id           String              @id @default(cuid())
+  assessmentId String
+  category     MeasurementCategory
+  label        String
+  value        Float?
+  unit         String?
+  note         String?
+
+  assessment Assessment @relation(fields: [assessmentId], references: [id])
+}
+
 // Precomputed daily load metrics per athlete — written by the metrics
 // engine (src/lib/metrics.ts) whenever a new SessionReport/Activity lands.
 model LoadSnapshot {
-  id             String   @id @default(cuid())
-  athleteId      String
-  date           DateTime
-  internalLoad   Float
-  externalLoad   Float?
-  combinedLoad   Float
-  monotony       Float?
-  strain         Float?
-  acwr           Float?
-  acwrZone       AcwrZone?
+  id           String    @id @default(cuid())
+  athleteId    String
+  date         DateTime
+  internalLoad Float
+  externalLoad Float?
+  combinedLoad Float
+  monotony     Float?
+  strain       Float?
+  acwr         Float?
+  acwrZone     AcwrZone?
 
   athlete Athlete @relation(fields: [athleteId], references: [id])
 

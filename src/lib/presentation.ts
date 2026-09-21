@@ -3,7 +3,18 @@
 // activity source, relative dates). Kept separate from lib/data.ts because
 // none of this is queried or persisted — it only shapes what's already read.
 
-import type { AcwrZone, ActivitySource, BodyPart, CycleFlow, CyclePhase, CycleSymptom, Sex, Sport } from "./types";
+import type {
+  AcwrZone,
+  ActivitySource,
+  AssessmentKind,
+  BodyPart,
+  CycleFlow,
+  CyclePhase,
+  CycleSymptom,
+  MeasurementCategory,
+  Sex,
+  Sport,
+} from "./types";
 
 export const SPORT_LABEL: Record<Sport, string> = {
   RUNNING: "Corrida",
@@ -149,3 +160,14 @@ export function monotonyNote(value: number): string {
     ? "Alta: pouca variação de carga na semana — um fator de risco à parte do volume."
     : "Boa variação de carga ao longo da semana.";
 }
+
+export const ASSESSMENT_KIND_LABEL: Record<AssessmentKind, string> = {
+  INITIAL: "Avaliação inicial",
+  FOLLOW_UP: "Reavaliação",
+};
+
+export const MEASUREMENT_CATEGORY_LABEL: Record<MeasurementCategory, string> = {
+  ROM: "Amplitude de movimento",
+  STRENGTH: "Força",
+  MOVEMENT_QUALITY: "Qualidade de movimento",
+};

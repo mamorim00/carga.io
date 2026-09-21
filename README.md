@@ -68,10 +68,19 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
 - **Feed de atividades** (`src/lib/data.ts#getAthleteActivityFeed`, `src/components/ActivityFeed.tsx`): junta cada
   atividade com o RPE do check-in correspondente (quando já enviado), usado tanto no progresso do atleta quanto no
   detalhe do atleta no painel do treinador.
+- **Avaliações** (`/dashboard/[athleteId]/assessments`): avaliação inicial e reavaliações estruturadas — cada uma
+  com uma lista livre de medidas (`Measurement`: categoria ROM/força/qualidade de movimento, rótulo, valor
+  numérico opcional, unidade), mais campos de texto para exames relatados, medicamentos e observações gerais.
+  Registrado pelo treinador (não existe login separado de fisio ainda — ver `Role` no schema), não pelo atleta:
+  é um exame profissional, diferente do mapa de dor que o próprio atleta autorreporta. Rótulo livre em vez de uma
+  taxonomia fixa de articulações/músculos, para o profissional medir o que quiser e comparar reavaliações
+  batendo o mesmo rótulo ao longo do tempo. Sem upload de arquivo de verdade ainda (exames/anexos são só texto) —
+  precisaria de uma decisão de armazenamento de blob que este app não tem hoje.
 - **API**: `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/invites` (criar
   convite), `POST /api/invites/[athleteId]/revoke`, `POST /api/invites/accept`, `POST /api/activities/manual`
   (registro manual de treino), `POST /api/checkin` (RPE + bem-estar), `POST /api/pain` (mapa de dor),
-  `POST /api/cycle` (ciclo menstrual) e `GET /api/athletes/[athleteId]/export` (CSV) — todos validados.
+  `POST /api/cycle` (ciclo menstrual), `POST /api/assessments` (avaliação/reavaliação) e
+  `GET /api/athletes/[athleteId]/export` (CSV) — todos validados.
 
 ## Contas de demonstração
 
@@ -91,7 +100,7 @@ vazio, separada da demo.
 npm install
 npx prisma generate  # gera o client do Prisma (precisa rodar de novo sempre que o schema mudar)
 npm run dev           # http://localhost:3000 — precisa de PRISMA_DATABASE_URL apontando pra um Postgres real
-npm test              # 67 testes; os de src/lib/data.test.ts precisam do mesmo Postgres alcançável
+npm test              # 69 testes; os de src/lib/data.test.ts precisam do mesmo Postgres alcançável
 npm run lint
 ```
 
@@ -137,29 +146,29 @@ Lista completa e detalhada, com o que já está pronto e o que falta, em `docs/m
 - [ ] RBAC mais rico (assistente técnico, fisio, fisiologista, admin de org — o enum `Role` já existe no schema)
 - [ ] Cobrança (Stripe/Pix)
 
-### Ideias vindas do mercado (não escopadas ainda)
+### Ideias vindas do mercado
 
-Feedback de uma fisioterapeuta que atua na área — ainda não avaliado quanto a esforço/prioridade nem incluído
-em `docs/mvp-tasks.md`, só registrado aqui para não se perder:
+Feedback de uma fisioterapeuta que atua na área. A primeira já foi implementada; o resto ainda não foi avaliado
+quanto a esforço/prioridade nem incluído em `docs/mvp-tasks.md`, só registrado aqui para não se perder:
 
-- **Conexão com outros apps de treino** (TrainingPeaks, relógios/wearables em geral) além do Strava — hoje o
-  schema já modela isso (`ActivitySource` inclui `GARMIN` e `APPLE_HEALTH`, não só `STRAVA`), mas nenhuma
-  integração real existe ainda além do Strava simulado.
-- **Prescrição de exercícios de aquecimento/fortalecimento preventivo** dentro do mesmo app onde a carga é
-  acompanhada — related a "biblioteca de exercícios/program builder", já listado como fora do escopo do MVP em
-  `docs/mvp-tasks.md`, mas com um ângulo mais específico de fisioterapia preventiva que vale reconsiderar quando
-  chegar a hora.
-- **Avaliação inicial e reavaliações estruturadas** — espaço para amplitude de movimento, força, qualidade de
-  movimento, anexar exames e medicamentos. Não existe hoje nem como conceito no schema (`PainReport` é o único
-  registro clínico, e é bem mais simples que isso); seria um modelo novo, provavelmente específico do fisio, não
-  do treinador.
-- **Lembretes automáticos para o atleta responder** (check-in, reavaliação) — hoje o app só _mostra_ para o
+- [x] **Avaliação inicial e reavaliações estruturadas** — espaço para amplitude de movimento, força, qualidade
+      de movimento, exames e medicamentos. Feito: `/dashboard/[athleteId]/assessments`, modelos `Assessment` +
+      `Measurement` no schema — ver "O que já funciona" acima para os detalhes e o que ficou de fora (upload de
+      arquivo de verdade).
+- [ ] **Conexão com outros apps de treino** (TrainingPeaks, relógios/wearables em geral) além do Strava — hoje o
+      schema já modela isso (`ActivitySource` inclui `GARMIN` e `APPLE_HEALTH`, não só `STRAVA`), mas nenhuma
+      integração real existe ainda além do Strava simulado.
+- [ ] **Prescrição de exercícios de aquecimento/fortalecimento preventivo** dentro do mesmo app onde a carga é
+      acompanhada — related a "biblioteca de exercícios/program builder", já listado como fora do escopo do MVP
+      em `docs/mvp-tasks.md`, mas com um ângulo mais específico de fisioterapia preventiva que vale reconsiderar
+      quando chegar a hora.
+- [ ] **Lembretes automáticos para o atleta responder** (check-in, reavaliação) — hoje o app só _mostra_ para o
   treinador quem está sem check-in há 3+ dias (`isNonCompliant`, no painel); não existe nenhum envio automático
   de mensagem para o atleta. Depende de alguma forma de contato (e-mail, push, WhatsApp) ainda não decidida.
-- **Multidisciplinar com visibilidade por permissão** — treinador, preparador físico, fisioterapeuta etc. todos
-  no mesmo app, cada um vendo só o que o profissional responsável autorizar, com o histórico do atleta
-  acompanhando ele numa transferência de clube. É a ideia mais estrutural das cinco: o enum `Role` já existe no
-  schema (`HEAD_COACH`, `ASSISTANT_COACH`, `PHYSIO`, `PHYSIOLOGIST`, `ORG_ADMIN`) mas não é usado por lugar
-  nenhum do app hoje (login é 1 Coach : 1 Org, sem RBAC de verdade) — e "o histórico atravessa uma transferência
-  de clube" implica dado do atleta sobrevivendo à saída de um Org, o que é uma mudança de modelo maior do que só
-  adicionar papéis a um Org existente.
+- [ ] **Multidisciplinar com visibilidade por permissão** — treinador, preparador físico, fisioterapeuta etc.
+      todos no mesmo app, cada um vendo só o que o profissional responsável autorizar, com o histórico do atleta
+      acompanhando ele numa transferência de clube. É a ideia mais estrutural das cinco: o enum `Role` já existe
+      no schema (`HEAD_COACH`, `ASSISTANT_COACH`, `PHYSIO`, `PHYSIOLOGIST`, `ORG_ADMIN`) mas não é usado por
+      lugar nenhum do app hoje (login é 1 Coach : 1 Org, sem RBAC de verdade) — e "o histórico atravessa uma
+      transferência de clube" implica dado do atleta sobrevivendo à saída de um Org, o que é uma mudança de
+      modelo maior do que só adicionar papéis a um Org existente.

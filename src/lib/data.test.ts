@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   acceptAthleteInvite,
+  addAssessment,
   addCycleLog,
   addManualActivity,
   addPainReport,
@@ -10,6 +11,7 @@ import {
   findCoachByEmail,
   getAthlete,
   getAthleteActivityFeed,
+  getAthleteAssessments,
   getAthleteByInviteToken,
   getAthleteCycleLogs,
   getAthleteExportRows,
@@ -381,5 +383,40 @@ describe("getAthleteExportRows", () => {
     const rows = await getAthleteExportRows(thiago!.id);
     const unreported = rows.find((r) => r.rpe === null);
     expect(unreported?.internalLoad).toBeNull();
+  });
+});
+
+describe("assessments", () => {
+  it("lets a coach log an initial assessment with measurements and read it back", async () => {
+    const marina = await findAthleteByEmail("marina.alves@atleta.com");
+    const assessment = await addAssessment({
+      athleteId: marina!.id,
+      coachId: demoCoach.id,
+      kind: "INITIAL",
+      examsNote: "Raio-X joelho D sem alterações",
+      measurements: [
+        { category: "ROM", label: "Flexão de joelho direito", value: 130, unit: "graus" },
+        { category: "STRENGTH", label: "Quadríceps direito", value: 4, unit: "MMT 0-5" },
+      ],
+    });
+    expect(assessment.kind).toBe("INITIAL");
+    expect(assessment.measurements).toHaveLength(2);
+
+    const history = await getAthleteAssessments(marina!.id);
+    expect(history[0].id).toBe(assessment.id);
+    expect(history[0].measurements.map((m) => m.label)).toContain("Flexão de joelho direito");
+  });
+
+  it("allows a follow-up with no measurements, just notes", async () => {
+    const marina = await findAthleteByEmail("marina.alves@atleta.com");
+    const assessment = await addAssessment({
+      athleteId: marina!.id,
+      coachId: demoCoach.id,
+      kind: "FOLLOW_UP",
+      generalNote: "Evolução dentro do esperado",
+      measurements: [],
+    });
+    expect(assessment.measurements).toHaveLength(0);
+    expect(assessment.generalNote).toBe("Evolução dentro do esperado");
   });
 });
