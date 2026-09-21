@@ -136,3 +136,30 @@ Lista completa e detalhada, com o que já está pronto e o que falta, em `docs/m
 - [ ] Enviar o link de convite por e-mail de verdade, em vez de só mostrar na tela do treinador
 - [ ] RBAC mais rico (assistente técnico, fisio, fisiologista, admin de org — o enum `Role` já existe no schema)
 - [ ] Cobrança (Stripe/Pix)
+
+### Ideias vindas do mercado (não escopadas ainda)
+
+Feedback de uma fisioterapeuta que atua na área — ainda não avaliado quanto a esforço/prioridade nem incluído
+em `docs/mvp-tasks.md`, só registrado aqui para não se perder:
+
+- **Conexão com outros apps de treino** (TrainingPeaks, relógios/wearables em geral) além do Strava — hoje o
+  schema já modela isso (`ActivitySource` inclui `GARMIN` e `APPLE_HEALTH`, não só `STRAVA`), mas nenhuma
+  integração real existe ainda além do Strava simulado.
+- **Prescrição de exercícios de aquecimento/fortalecimento preventivo** dentro do mesmo app onde a carga é
+  acompanhada — related a "biblioteca de exercícios/program builder", já listado como fora do escopo do MVP em
+  `docs/mvp-tasks.md`, mas com um ângulo mais específico de fisioterapia preventiva que vale reconsiderar quando
+  chegar a hora.
+- **Avaliação inicial e reavaliações estruturadas** — espaço para amplitude de movimento, força, qualidade de
+  movimento, anexar exames e medicamentos. Não existe hoje nem como conceito no schema (`PainReport` é o único
+  registro clínico, e é bem mais simples que isso); seria um modelo novo, provavelmente específico do fisio, não
+  do treinador.
+- **Lembretes automáticos para o atleta responder** (check-in, reavaliação) — hoje o app só _mostra_ para o
+  treinador quem está sem check-in há 3+ dias (`isNonCompliant`, no painel); não existe nenhum envio automático
+  de mensagem para o atleta. Depende de alguma forma de contato (e-mail, push, WhatsApp) ainda não decidida.
+- **Multidisciplinar com visibilidade por permissão** — treinador, preparador físico, fisioterapeuta etc. todos
+  no mesmo app, cada um vendo só o que o profissional responsável autorizar, com o histórico do atleta
+  acompanhando ele numa transferência de clube. É a ideia mais estrutural das cinco: o enum `Role` já existe no
+  schema (`HEAD_COACH`, `ASSISTANT_COACH`, `PHYSIO`, `PHYSIOLOGIST`, `ORG_ADMIN`) mas não é usado por lugar
+  nenhum do app hoje (login é 1 Coach : 1 Org, sem RBAC de verdade) — e "o histórico atravessa uma transferência
+  de clube" implica dado do atleta sobrevivendo à saída de um Org, o que é uma mudança de modelo maior do que só
+  adicionar papéis a um Org existente.
