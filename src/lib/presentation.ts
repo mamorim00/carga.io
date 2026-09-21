@@ -11,6 +11,7 @@ import type {
   CycleFlow,
   CyclePhase,
   CycleSymptom,
+  ExerciseCategory,
   MeasurementCategory,
   Sex,
   Sport,
@@ -170,4 +171,10 @@ export const MEASUREMENT_CATEGORY_LABEL: Record<MeasurementCategory, string> = {
   ROM: "Amplitude de movimento",
   STRENGTH: "Força",
   MOVEMENT_QUALITY: "Qualidade de movimento",
+};
+
+export const EXERCISE_CATEGORY_LABEL: Record<ExerciseCategory, string> = {
+  WARM_UP: "Aquecimento",
+  STRENGTHENING: "Fortalecimento",
+  MOBILITY: "Mobilidade",
 };

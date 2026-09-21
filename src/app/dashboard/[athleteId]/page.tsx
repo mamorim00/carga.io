@@ -61,6 +61,7 @@ export default async function AthleteDetailPage({
         </Link>
         <div className="flex gap-3 text-[11.5px] font-semibold text-accent">
           <Link href={`/dashboard/${athleteId}/assessments`}>Avaliações</Link>
+          <Link href={`/dashboard/${athleteId}/exercises`}>Exercícios</Link>
           <a href={`/api/athletes/${athleteId}/export`}>Exportar CSV</a>
           <Link href={`/dashboard/${athleteId}/print`}>Relatório (PDF)</Link>
         </div>

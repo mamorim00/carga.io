@@ -3,10 +3,12 @@ import {
   acceptAthleteInvite,
   addAssessment,
   addCycleLog,
+  addExercise,
   addManualActivity,
   addPainReport,
   createAthleteInvite,
   createCoachAccount,
+  deactivatePrescription,
   findAthleteByEmail,
   findCoachByEmail,
   getAthlete,
@@ -17,13 +19,17 @@ import {
   getAthleteExportRows,
   getAthleteLoadSummary,
   getAthletePainReports,
+  getAthletePrescriptions,
+  getExerciseLibrary,
   getLatestUnreportedActivity,
   getPainReportsForCoach,
   getPendingInvites,
   getRoster,
   getWellnessHistory,
   isEmailTaken,
+  prescribeExercise,
   revokeInvite,
+  setExerciseCompletion,
   submitCheckin,
 } from "./data";
 import type { Coach } from "./types";
@@ -418,5 +424,75 @@ describe("assessments", () => {
     });
     expect(assessment.measurements).toHaveLength(0);
     expect(assessment.generalNote).toBe("Evolução dentro do esperado");
+  });
+});
+
+describe("exercise prescriptions", () => {
+  it("has the curated library seeded, spanning all three categories", async () => {
+    const library = await getExerciseLibrary();
+    expect(library.length).toBeGreaterThan(0);
+    const categories = new Set(library.map((e) => e.category));
+    expect(categories).toEqual(new Set(["WARM_UP", "STRENGTHENING", "MOBILITY"]));
+  });
+
+  it("lets a coach add their own exercise with a video link", async () => {
+    const exercise = await addExercise({
+      name: "Exercício de teste",
+      category: "MOBILITY",
+      videoUrl: "https://example.com/video",
+    });
+    expect(exercise.source).toBe("CURATED");
+    expect(exercise.videoUrl).toBe("https://example.com/video");
+  });
+
+  it("prescribes an exercise to an athlete, then lets them mark it done and undo it", async () => {
+    const marina = await findAthleteByEmail("marina.alves@atleta.com");
+    const [exercise] = await getExerciseLibrary();
+    const prescription = await prescribeExercise({
+      athleteId: marina!.id,
+      coachId: demoCoach.id,
+      exerciseId: exercise.id,
+      sets: 3,
+      reps: 15,
+      frequency: "3x por semana",
+    });
+    expect(prescription.doneToday).toBe(false);
+    expect(prescription.completedLast7Days).toBe(0);
+
+    await setExerciseCompletion({ prescriptionId: prescription.id, athleteId: marina!.id, done: true });
+    let list = await getAthletePrescriptions(marina!.id);
+    let found = list.find((p) => p.id === prescription.id)!;
+    expect(found.doneToday).toBe(true);
+    expect(found.completedLast7Days).toBe(1);
+
+    // Marking done twice in the same day must not double-count.
+    await setExerciseCompletion({ prescriptionId: prescription.id, athleteId: marina!.id, done: true });
+    list = await getAthletePrescriptions(marina!.id);
+    found = list.find((p) => p.id === prescription.id)!;
+    expect(found.completedLast7Days).toBe(1);
+
+    await setExerciseCompletion({ prescriptionId: prescription.id, athleteId: marina!.id, done: false });
+    list = await getAthletePrescriptions(marina!.id);
+    found = list.find((p) => p.id === prescription.id)!;
+    expect(found.doneToday).toBe(false);
+  });
+
+  it("rejects marking another athlete's prescription done", async () => {
+    const [a, b] = await getRoster(demoCoach.id);
+    const [exercise] = await getExerciseLibrary();
+    const prescription = await prescribeExercise({ athleteId: a.athleteId, coachId: demoCoach.id, exerciseId: exercise.id });
+    await expect(
+      setExerciseCompletion({ prescriptionId: prescription.id, athleteId: b.athleteId, done: true }),
+    ).rejects.toThrow();
+  });
+
+  it("lets the prescribing coach deactivate a prescription, dropping it from the active list", async () => {
+    const marina = await findAthleteByEmail("marina.alves@atleta.com");
+    const [exercise] = await getExerciseLibrary();
+    const prescription = await prescribeExercise({ athleteId: marina!.id, coachId: demoCoach.id, exerciseId: exercise.id });
+
+    expect(await deactivatePrescription(prescription.id, demoCoach.id)).toBe(true);
+    const active = await getAthletePrescriptions(marina!.id, true);
+    expect(active.map((p) => p.id)).not.toContain(prescription.id);
   });
 });

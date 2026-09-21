@@ -76,10 +76,23 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
   taxonomia fixa de articulações/músculos, para o profissional medir o que quiser e comparar reavaliações
   batendo o mesmo rótulo ao longo do tempo. Sem upload de arquivo de verdade ainda (exames/anexos são só texto) —
   precisaria de uma decisão de armazenamento de blob que este app não tem hoje.
+- **Exercícios de prevenção** (`/exercises` para o atleta, `/dashboard/[athleteId]/exercises` para o treinador):
+  biblioteca compartilhada de exercícios de aquecimento, fortalecimento preventivo e mobilidade (`Exercise`,
+  12 exercícios semeados, sem vínculo com nenhum Org — é conteúdo genérico, não específico de um cliente); o
+  treinador prescreve um exercício da biblioteca para um atleta (séries, repetições, frequência em texto livre,
+  notas) e o atleta marca como feito no dia em `/exercises`, visível junto da carga no mesmo app, como pedido no
+  feedback do mercado. Adesão (`completedLast7Days`) é recalculada a cada leitura a partir de
+  `ExerciseCompletion`, mesmo princípio de "nunca guardar um total derivado" da carga (`getDailyLoadsSeries`).
+  Sem vídeo de verdade nos exercícios semeados — **este app nunca inventa uma URL de vídeo**; o treinador cola
+  seu próprio link de confiança ao cadastrar um exercício novo pela mesma tela. `source`/`externalId` no schema
+  deixam a porta aberta para importar de uma API de exercícios de verdade (wger, ExerciseDB, …) depois, mas
+  nenhuma foi integrada ainda — a maioria exige uma chave de API que este app não tem.
 - **API**: `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/invites` (criar
   convite), `POST /api/invites/[athleteId]/revoke`, `POST /api/invites/accept`, `POST /api/activities/manual`
   (registro manual de treino), `POST /api/checkin` (RPE + bem-estar), `POST /api/pain` (mapa de dor),
-  `POST /api/cycle` (ciclo menstrual), `POST /api/assessments` (avaliação/reavaliação) e
+  `POST /api/cycle` (ciclo menstrual), `POST /api/assessments` (avaliação/reavaliação), `POST /api/exercises`
+  (novo exercício na biblioteca), `POST /api/exercises/prescriptions` (prescrever), `POST
+  /api/exercises/prescriptions/[id]/deactivate`, `POST /api/exercises/completions` (marcar feito/desfazer) e
   `GET /api/athletes/[athleteId]/export` (CSV) — todos validados.
 
 ## Contas de demonstração
@@ -100,7 +113,7 @@ vazio, separada da demo.
 npm install
 npx prisma generate  # gera o client do Prisma (precisa rodar de novo sempre que o schema mudar)
 npm run dev           # http://localhost:3000 — precisa de PRISMA_DATABASE_URL apontando pra um Postgres real
-npm test              # 69 testes; os de src/lib/data.test.ts precisam do mesmo Postgres alcançável
+npm test              # 74 testes; os de src/lib/data.test.ts precisam do mesmo Postgres alcançável
 npm run lint
 ```
 
@@ -148,7 +161,7 @@ Lista completa e detalhada, com o que já está pronto e o que falta, em `docs/m
 
 ### Ideias vindas do mercado
 
-Feedback de uma fisioterapeuta que atua na área. A primeira já foi implementada; o resto ainda não foi avaliado
+Feedback de uma fisioterapeuta que atua na área. Duas já foram implementadas; o resto ainda não foi avaliado
 quanto a esforço/prioridade nem incluído em `docs/mvp-tasks.md`, só registrado aqui para não se perder:
 
 - [x] **Avaliação inicial e reavaliações estruturadas** — espaço para amplitude de movimento, força, qualidade
@@ -158,10 +171,10 @@ quanto a esforço/prioridade nem incluído em `docs/mvp-tasks.md`, só registrad
 - [ ] **Conexão com outros apps de treino** (TrainingPeaks, relógios/wearables em geral) além do Strava — hoje o
       schema já modela isso (`ActivitySource` inclui `GARMIN` e `APPLE_HEALTH`, não só `STRAVA`), mas nenhuma
       integração real existe ainda além do Strava simulado.
-- [ ] **Prescrição de exercícios de aquecimento/fortalecimento preventivo** dentro do mesmo app onde a carga é
-      acompanhada — related a "biblioteca de exercícios/program builder", já listado como fora do escopo do MVP
-      em `docs/mvp-tasks.md`, mas com um ângulo mais específico de fisioterapia preventiva que vale reconsiderar
-      quando chegar a hora.
+- [x] **Prescrição de exercícios de aquecimento/fortalecimento preventivo** dentro do mesmo app onde a carga é
+      acompanhada — feito: `/exercises` (atleta) e `/dashboard/[athleteId]/exercises` (treinador), ver "O que já
+      funciona" acima. Mais restrito que a "biblioteca de exercícios/program builder" citada como fora do escopo
+      do MVP em `docs/mvp-tasks.md` — sem builder de programa/periodização, só prescrição simples + adesão.
 - [ ] **Lembretes automáticos para o atleta responder** (check-in, reavaliação) — hoje o app só _mostra_ para o
   treinador quem está sem check-in há 3+ dias (`isNonCompliant`, no painel); não existe nenhum envio automático
   de mensagem para o atleta. Depende de alguma forma de contato (e-mail, push, WhatsApp) ainda não decidida.

@@ -111,6 +111,14 @@ export default async function ProgressPage() {
         </Link>
       </div>
 
+      <Link
+        href="/exercises"
+        className="flex items-center justify-between rounded-lg border border-line bg-surface px-4 py-3.5"
+      >
+        <span className="text-[13px] font-medium text-ink">Meus exercícios</span>
+        <span className="text-muted">→</span>
+      </Link>
+
       {athlete.sex === "FEMALE" && (
         <Link
           href="/cycle"

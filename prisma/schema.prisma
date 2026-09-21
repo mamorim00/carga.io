@@ -74,6 +74,12 @@ enum MeasurementCategory {
   MOVEMENT_QUALITY // qualidade de movimento
 }
 
+enum ExerciseCategory {
+  WARM_UP // aquecimento
+  STRENGTHENING // fortalecimento específico, preventivo
+  MOBILITY // mobilidade
+}
+
 // Body regions selectable on the pain map (front-view hotspots, plus two
 // "not visible from the front" chips for the back).
 enum BodyPart {
@@ -132,9 +138,10 @@ model Coach {
   email        String @unique
   passwordHash String
 
-  org         Org          @relation(fields: [orgId], references: [id])
-  athletes    Athlete[]
-  assessments Assessment[]
+  org                   Org                    @relation(fields: [orgId], references: [id])
+  athletes              Athlete[]
+  assessments           Assessment[]
+  exercisePrescriptions ExercisePrescription[]
 }
 
 model Athlete {
@@ -165,13 +172,14 @@ model Athlete {
   org   Org   @relation(fields: [orgId], references: [id])
   coach Coach @relation(fields: [coachId], references: [id])
 
-  activities       Activity[]
-  sessionReports   SessionReport[]
-  wellnessCheckins WellnessCheckin[]
-  painReports      PainReport[]
-  cycleLogs        CycleLog[]
-  loadSnapshots    LoadSnapshot[]
-  assessments      Assessment[]
+  activities            Activity[]
+  sessionReports        SessionReport[]
+  wellnessCheckins      WellnessCheckin[]
+  painReports           PainReport[]
+  cycleLogs             CycleLog[]
+  loadSnapshots         LoadSnapshot[]
+  assessments           Assessment[]
+  exercisePrescriptions ExercisePrescription[]
 }
 
 model Activity {
@@ -279,6 +287,65 @@ model Measurement {
   note         String?
 
   assessment Assessment @relation(fields: [assessmentId], references: [id])
+}
+
+// Shared exercise library — not scoped to an Org, since exercise content
+// itself (name, category, how to do it) isn't client-specific. Feedback
+// from a physiotherapist in the field: "controle de carga no mesmo app de
+// exercícios de aquecimento ou fortalecimento específico, preventivo".
+// `source`/`externalId` exist so a real third-party exercise API (wger,
+// ExerciseDB, ...) can be plugged in as a bulk importer later without a
+// schema change — none is wired up yet (most need an API key this app
+// doesn't have), so today every row's source is "CURATED": a coach typed
+// it in themselves, pasting their own trusted video link if they have one.
+// This app never invents a video URL on a coach's behalf.
+model Exercise {
+  id           String           @id @default(cuid())
+  name         String
+  category     ExerciseCategory
+  instructions String?
+  videoUrl     String?
+  source       String           @default("CURATED")
+  externalId   String?
+  createdAt    DateTime         @default(now())
+
+  prescriptions ExercisePrescription[]
+}
+
+// A coach prescribing one library Exercise to one athlete — sets/reps and
+// frequency are free text (e.g. "3x15", "3x por semana") rather than a
+// structured schedule DSL, matching this app's preference for a simple
+// field over a feature nobody asked for yet.
+model ExercisePrescription {
+  id         String   @id @default(cuid())
+  athleteId  String
+  coachId    String
+  exerciseId String
+  sets       Int?
+  reps       Int?
+  frequency  String?
+  notes      String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  athlete     Athlete              @relation(fields: [athleteId], references: [id])
+  coach       Coach                @relation(fields: [coachId], references: [id])
+  exercise    Exercise             @relation(fields: [exerciseId], references: [id])
+  completions ExerciseCompletion[]
+}
+
+// One "done" mark per prescription per calendar day (date normalized to a
+// fixed time-of-day by the app, same trick as the rest of this schema's
+// seed data) — toggled by the athlete, read by the coach as adherence.
+model ExerciseCompletion {
+  id             String   @id @default(cuid())
+  prescriptionId String
+  date           DateTime
+  createdAt      DateTime @default(now())
+
+  prescription ExercisePrescription @relation(fields: [prescriptionId], references: [id])
+
+  @@unique([prescriptionId, date])
 }
 
 // Precomputed daily load metrics per athlete — written by the metrics

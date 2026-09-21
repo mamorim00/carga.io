@@ -49,6 +49,9 @@ export type AssessmentKind = "INITIAL" | "FOLLOW_UP";
 export const MEASUREMENT_CATEGORIES = ["ROM", "STRENGTH", "MOVEMENT_QUALITY"] as const;
 export type MeasurementCategory = (typeof MEASUREMENT_CATEGORIES)[number];
 
+export const EXERCISE_CATEGORIES = ["WARM_UP", "STRENGTHENING", "MOBILITY"] as const;
+export type ExerciseCategory = (typeof EXERCISE_CATEGORIES)[number];
+
 export interface Org {
   id: string;
   name: string;
@@ -166,6 +169,41 @@ export interface Assessment {
   generalNote?: string;
   createdAt: string;
   measurements: Measurement[];
+}
+
+/**
+ * One entry in the shared exercise library. `source`/`externalId` are for
+ * a future bulk import from a real third-party exercise API (none is wired
+ * up — most need an API key this app doesn't have) — every row today is
+ * "CURATED": a coach typed it in, with their own video link if they have
+ * one. This app never fabricates a video URL.
+ */
+export interface Exercise {
+  id: string;
+  name: string;
+  category: ExerciseCategory;
+  instructions?: string;
+  videoUrl?: string;
+  source: string;
+  externalId?: string;
+}
+
+/** A library Exercise prescribed by a coach to one athlete. */
+export interface ExercisePrescription {
+  id: string;
+  athleteId: string;
+  coachId: string;
+  exercise: Exercise;
+  sets: number | null;
+  reps: number | null;
+  frequency?: string;
+  notes?: string;
+  active: boolean;
+  createdAt: string;
+  /** Whether the athlete has already marked this done today. */
+  doneToday: boolean;
+  /** How many of the last 7 calendar days have a completion — simple adherence signal. */
+  completedLast7Days: number;
 }
 
 export interface AthleteLoadSummary {
