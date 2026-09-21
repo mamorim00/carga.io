@@ -83,17 +83,27 @@ Plataforma de carga de treino para treinadores, fisios e fisiologistas — Fase 
   notas) e o atleta marca como feito no dia em `/exercises`, visível junto da carga no mesmo app, como pedido no
   feedback do mercado. Adesão (`completedLast7Days`) é recalculada a cada leitura a partir de
   `ExerciseCompletion`, mesmo princípio de "nunca guardar um total derivado" da carga (`getDailyLoadsSeries`).
-  Sem vídeo de verdade nos exercícios semeados — **este app nunca inventa uma URL de vídeo**; o treinador cola
-  seu próprio link de confiança ao cadastrar um exercício novo pela mesma tela. `source`/`externalId` no schema
-  deixam a porta aberta para importar de uma API de exercícios de verdade (wger, ExerciseDB, …) depois, mas
-  nenhuma foi integrada ainda — a maioria exige uma chave de API que este app não tem.
+  Exercícios semeados não têm vídeo — **este app nunca inventa uma URL de vídeo**; o treinador cola seu próprio
+  link de confiança ao cadastrar um exercício novo pela mesma tela. Para mídia de verdade em massa, um botão
+  "Importar da ExerciseDB" na mesma tela chama a [ExerciseDB](https://rapidapi.com/justin-WFnsXH_t6/api/exercisedb)
+  (RapidAPI) e traz demonstrações animadas — precisa de `EXERCISEDB_API_KEY` nas variáveis de ambiente do Vercel
+  (não neste repositório); sem ela, o botão responde com um erro claro em vez de falhar silenciosamente. **Nunca
+  testado contra a API real** — `rapidapi.com` e `exercisedb.p.rapidapi.com` são bloqueados pela política de rede
+  deste sandbox (confirmado: a mesma política que barra o Postgres bloqueia esses hosts também, não só bancos de
+  dados), então o parsing da resposta (`parseExerciseDbEntry`, com testes próprios em
+  `src/lib/exercisedb.test.ts` — os únicos deste arquivo que rodam de verdade aqui) foi escrito a partir da forma
+  documentada da API, não de uma resposta real; a categoria de todo exercício importado vira `STRENGTHENING` por
+  padrão (a ExerciseDB categoriza por músculo/parte do corpo, não por aquecimento/fortalecimento/mobilidade) —
+  o treinador recategoriza manualmente os que não servirem. Todo exercício importado carrega `source: "EXERCISEDB"`
+  e o `externalId` original, então rodar a importação de novo só traz o que ainda não existe.
 - **API**: `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/invites` (criar
   convite), `POST /api/invites/[athleteId]/revoke`, `POST /api/invites/accept`, `POST /api/activities/manual`
   (registro manual de treino), `POST /api/checkin` (RPE + bem-estar), `POST /api/pain` (mapa de dor),
   `POST /api/cycle` (ciclo menstrual), `POST /api/assessments` (avaliação/reavaliação), `POST /api/exercises`
-  (novo exercício na biblioteca), `POST /api/exercises/prescriptions` (prescrever), `POST
-  /api/exercises/prescriptions/[id]/deactivate`, `POST /api/exercises/completions` (marcar feito/desfazer) e
-  `GET /api/athletes/[athleteId]/export` (CSV) — todos validados.
+  (novo exercício na biblioteca), `POST /api/exercises/import` (importar da ExerciseDB),
+  `POST /api/exercises/prescriptions` (prescrever), `POST /api/exercises/prescriptions/[id]/deactivate`,
+  `POST /api/exercises/completions` (marcar feito/desfazer) e `GET /api/athletes/[athleteId]/export` (CSV) —
+  todos validados.
 
 ## Contas de demonstração
 
@@ -113,7 +123,7 @@ vazio, separada da demo.
 npm install
 npx prisma generate  # gera o client do Prisma (precisa rodar de novo sempre que o schema mudar)
 npm run dev           # http://localhost:3000 — precisa de PRISMA_DATABASE_URL apontando pra um Postgres real
-npm test              # 74 testes; os de src/lib/data.test.ts precisam do mesmo Postgres alcançável
+npm test              # 81 testes; os de src/lib/data.test.ts precisam do mesmo Postgres alcançável
 npm run lint
 ```
 
@@ -147,6 +157,11 @@ abaixo); é `db push` aplicando o schema diretamente, aceitável nesta fase, mas
   desenvolvimento fixa e pública (ver `src/lib/session-token.ts`), o que é aceitável para rodar localmente mas
   **nunca** em produção. Defina `SESSION_SECRET` (ex.: `openssl rand -base64 32`) nas variáveis de ambiente do
   Vercel antes de expor isto a usuários reais — sem isso, qualquer um pode forjar uma sessão de treinador.
+- `EXERCISEDB_API_KEY` (opcional): chave do RapidAPI para a
+  [ExerciseDB](https://rapidapi.com/justin-WFnsXH_t6/api/exercisedb), usada só pelo botão "Importar da
+  ExerciseDB" em `/dashboard/[athleteId]/exercises`. Sem ela o resto do app funciona normalmente — o botão
+  simplesmente responde com um erro claro pedindo pra configurar. Defina nas variáveis de ambiente do Vercel
+  (Production e Preview), nunca aqui no repositório.
 
 ## Próximos passos
 

@@ -1267,3 +1267,103 @@ export async function setExerciseCompletion(input: {
     await prisma.exerciseCompletion.deleteMany({ where: { prescriptionId: input.prescriptionId, date: today } });
   }
 }
+
+// ---- ExerciseDB import (real third-party exercise media) ---------------
+// The one real external-API integration on the library — everything else
+// in it is coach-typed. Needs EXERCISEDB_API_KEY (a RapidAPI key for
+// https://rapidapi.com/justin-WFnsXH_t6/api/exercisedb), which this app
+// doesn't ship with — a coach/admin sets it in Vercel's env vars, never in
+// chat. This sandbox's network policy blocks both rapidapi.com and
+// exercisedb.p.rapidapi.com (confirmed: CONNECT rejected), so this was
+// written from documented API shape, not a live response, and could not be
+// exercised here at all — parsing is deliberately defensive (skip anything
+// that doesn't look right rather than throw) and its first real run is
+// whatever a coach triggers on the live deploy. Report back here if the
+// response shape turns out to differ from what's assumed below.
+
+const EXERCISEDB_BASE_URL = "https://exercisedb.p.rapidapi.com";
+const EXERCISEDB_HOST = "exercisedb.p.rapidapi.com";
+
+export interface ParsedExerciseDbEntry {
+  externalId: string;
+  name: string;
+  instructions?: string;
+  videoUrl?: string;
+}
+
+/**
+ * Exported (unlike this file's other internal mappers) specifically so it
+ * can be unit-tested without a database — this is the one piece of the
+ * ExerciseDB import that's pure and can actually run in a sandbox that
+ * can't reach the real API. See data.test.ts.
+ */
+export function parseExerciseDbEntry(raw: unknown): ParsedExerciseDbEntry | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const externalId = typeof r.id === "string" ? r.id : typeof r.id === "number" ? String(r.id) : null;
+  const name = typeof r.name === "string" ? r.name.trim() : "";
+  if (!externalId || !name) return null;
+  const instructions = Array.isArray(r.instructions)
+    ? r.instructions.filter((s): s is string => typeof s === "string").join(" ")
+    : undefined;
+  // ExerciseDB's media is an animated GIF, not a video file — it's still
+  // stored in videoUrl (the field predates this integration) since it
+  // serves the same purpose: showing the movement, not just naming it.
+  const videoUrl = typeof r.gifUrl === "string" ? r.gifUrl : undefined;
+  return { externalId, name, instructions, videoUrl };
+}
+
+/**
+ * Bulk-imports exercises from ExerciseDB into the shared library. A
+ * deliberate coach/admin action (a button, not part of ensureSeeded) since
+ * it's a real, rate-limited call against someone's paid/keyed API
+ * subscription, not something that should fire on every cold start.
+ * Already-imported exercises (matched by source + externalId) are
+ * skipped, so running this again just tops up whatever's new.
+ */
+export async function importExercisesFromExerciseDb(limit = 50): Promise<{ imported: number; skipped: number }> {
+  const apiKey = process.env.EXERCISEDB_API_KEY;
+  if (!apiKey) throw new Error("EXERCISEDB_API_KEY não configurada no ambiente.");
+  await getSeeded();
+
+  const res = await fetch(`${EXERCISEDB_BASE_URL}/exercises?limit=${limit}`, {
+    headers: { "X-RapidAPI-Key": apiKey, "X-RapidAPI-Host": EXERCISEDB_HOST },
+  });
+  if (!res.ok) throw new Error(`ExerciseDB respondeu ${res.status}`);
+  const body: unknown = await res.json();
+  if (!Array.isArray(body)) throw new Error("Resposta inesperada da ExerciseDB (esperava uma lista).");
+
+  const existing = await prisma.exercise.findMany({
+    where: { source: "EXERCISEDB" },
+    select: { externalId: true },
+  });
+  const knownIds = new Set(existing.map((e) => e.externalId));
+
+  const toCreate: Prisma.ExerciseCreateManyInput[] = [];
+  let skipped = 0;
+  for (const raw of body) {
+    const parsed = parseExerciseDbEntry(raw);
+    if (!parsed || knownIds.has(parsed.externalId)) {
+      skipped++;
+      continue;
+    }
+    toCreate.push({
+      id: newId("ex"),
+      name: parsed.name,
+      // ExerciseDB has no warm-up/strengthening/mobility taxonomy of its
+      // own (it categorizes by body part/target muscle instead) — every
+      // import lands as STRENGTHENING, the closest fit for a resistance-
+      // exercise database; a coach can recategorize individual entries later.
+      category: "STRENGTHENING",
+      instructions: parsed.instructions,
+      videoUrl: parsed.videoUrl,
+      source: "EXERCISEDB",
+      externalId: parsed.externalId,
+    });
+    knownIds.add(parsed.externalId);
+  }
+  if (toCreate.length > 0) {
+    await prisma.exercise.createMany({ data: toCreate, skipDuplicates: true });
+  }
+  return { imported: toCreate.length, skipped };
+}

@@ -73,7 +73,7 @@ export function ExerciseChecklist({ prescriptions }: { prescriptions: ExercisePr
                 rel="noreferrer"
                 className="text-[11px] font-semibold text-accent"
               >
-                Ver vídeo
+                Ver demonstração
               </a>
             )}
           </div>

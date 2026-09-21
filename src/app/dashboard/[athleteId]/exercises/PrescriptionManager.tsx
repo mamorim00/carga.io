@@ -32,6 +32,9 @@ export function PrescriptionManager({
   const [newVideoUrl, setNewVideoUrl] = useState("");
   const [creatingExercise, setCreatingExercise] = useState(false);
 
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<string | null>(null);
+
   async function prescribe(e: React.FormEvent) {
     e.preventDefault();
     if (!exerciseId) {
@@ -102,8 +105,49 @@ export function PrescriptionManager({
     if (res.ok) router.refresh();
   }
 
+  async function importFromExerciseDb() {
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const res = await fetch("/api/exercises/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ limit: 50 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Falha ao importar");
+      setImportResult(`${data.imported} exercícios importados, ${data.skipped} já existiam ou vieram inválidos.`);
+      router.refresh();
+    } catch (err) {
+      setImportResult((err as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-2 rounded-lg border border-dashed border-line bg-surface px-4 py-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[12.5px] font-semibold text-ink">Importar da ExerciseDB</div>
+            <div className="text-[11px] text-muted">
+              Traz exercícios com demonstração animada para a biblioteca inteira (compartilhada entre equipes).
+              Precisa de <code>EXERCISEDB_API_KEY</code> configurada no Vercel.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={importFromExerciseDb}
+            disabled={importing}
+            className="flex-shrink-0 rounded-md border border-ink px-3 py-2 text-[12px] font-semibold text-ink disabled:opacity-60"
+          >
+            {importing ? "Importando…" : "Importar 50"}
+          </button>
+        </div>
+        {importResult && <p className="text-[11.5px] text-muted">{importResult}</p>}
+      </div>
+
       <form onSubmit={prescribe} className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-5">
         <div className="text-[13.5px] font-semibold text-ink">Prescrever exercício</div>
         {library.length === 0 ? (
